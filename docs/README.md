@@ -24,6 +24,9 @@ docs/
 - [Architecture détaillée](officiel/architecture/architecture-detaillee.md) — Fonctionnement précis de chaque composant, interactions, décisions techniques
 - [Flux de pseudonymisation](officiel/architecture/flux-pseudonymisation.md) — Pipeline détection → remplacement → mapping → restauration
 
+### Sécurité
+- [Analyse RSSI](officiel/securite/analyse-rssi.md) — Risques, données qui transitent, protections, conformité RGPD/NIS2
+
 ### Technique
 - [Modèle PII embarqué](officiel/technique/modele-pii.md) — Choix du modèle, ONNX Runtime, quantification, performances
 - [Proxy HTTP](officiel/technique/proxy-http.md) — Interception, streaming SSE, compatibilité providers
