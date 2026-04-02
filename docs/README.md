@@ -21,6 +21,7 @@ docs/
 
 ### Architecture
 - [Vue d'ensemble](officiel/architecture/vue-ensemble.md) — Schéma global, composants, flux de données
+- [Architecture détaillée](officiel/architecture/architecture-detaillee.md) — Fonctionnement précis de chaque composant, interactions, décisions techniques
 - [Flux de pseudonymisation](officiel/architecture/flux-pseudonymisation.md) — Pipeline détection → remplacement → mapping → restauration
 
 ### Technique
