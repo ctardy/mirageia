@@ -219,25 +219,49 @@ jobs:
 
 ## Updates
 
-### CLI (precompiled binary)
+### Automatic updates (built-in)
 
-```bash
-# Re-download the latest version
-curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+MirageIA includes a transparent automatic update system:
 
-# Or manually
-mirageia --version  # check current version
-# Download the new one from GitHub Releases
+```
+Proxy startup
+       │
+       ├── 1. Check for a staged binary in ~/.mirageia/staging/
+       │      → If found: swap with current binary, notify user
+       │
+       ├── 2. Start the proxy normally
+       │
+       └── 3. In the background (after 5s):
+              → Check latest version on GitHub Releases
+              → If newer: download to ~/.mirageia/staging/
+              → Will be applied on next startup
 ```
 
-### Tauri (installer)
+**The user sees nothing** — on next restart, the new version is already there.
 
-The Tauri installer supports automatic updates via the `tauri-plugin-updater` plugin:
+### Manual command
 
-1. On startup, MirageIA checks for a new version on GitHub Releases
-2. If available, notifies the user via the tray icon
-3. The user clicks to update -- automatic download and replacement
-4. Proxy restart
+```bash
+# Check if an update is available
+mirageia update --check
+
+# Check, download and apply immediately
+mirageia update
+```
+
+### Swap mechanism
+
+1. The new binary is downloaded to `~/.mirageia/staging/`
+2. On startup, the current binary is renamed to `.old`
+3. The staged binary is copied to the current location
+4. `.old` and staging/ are cleaned up
+5. On error: automatic rollback to `.old`
+
+### Install script (first install or force latest version)
+
+```bash
+curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+```
 
 ### cargo install
 

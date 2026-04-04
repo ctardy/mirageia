@@ -48,6 +48,13 @@ enum Commands {
         #[arg(short, long, default_value = "http://127.0.0.1:3100")]
         addr: String,
     },
+
+    /// Vérifier et installer les mises à jour
+    Update {
+        /// Vérifier seulement, sans installer
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[tokio::main]
@@ -68,6 +75,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Console { addr }) => {
             run_console(&addr).await?;
         }
+        Some(Commands::Update { check }) => {
+            mirageia::update::run_update(check).await?;
+        }
         Some(Commands::Proxy { .. }) | None => {
             let passthrough = match &cli.command {
                 Some(Commands::Proxy { passthrough }) => *passthrough,
@@ -80,6 +90,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             init_tracing(&config.log_level);
 
+            // Appliquer une mise à jour stagée si disponible
+            if let Some(new_version) = mirageia::update::apply_staged_update() {
+                tracing::info!("MirageIA mis à jour vers v{} — relancez pour utiliser la nouvelle version", new_version);
+                eprintln!();
+                eprintln!("  ✓ MirageIA mis à jour vers v{}", new_version);
+                eprintln!("    Relancez MirageIA pour utiliser la nouvelle version.");
+                eprintln!();
+                return Ok(());
+            }
+
             // Au premier lancement, proposer le setup si pas de config
             if !config_exists() {
                 eprintln!("Première utilisation ? Lancez `mirageia setup` pour la configuration guidée.");
@@ -87,6 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             tracing::info!("MirageIA v{}", env!("CARGO_PKG_VERSION"));
+
+            // Vérification de mise à jour en arrière-plan (silencieuse)
+            mirageia::update::spawn_background_check();
+
             proxy::start_proxy(config).await?;
         }
     }

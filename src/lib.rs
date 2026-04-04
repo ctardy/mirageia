@@ -5,3 +5,4 @@ pub mod proxy;
 pub mod pseudonymization;
 pub mod setup;
 pub mod streaming;
+pub mod update;

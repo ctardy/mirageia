@@ -219,25 +219,49 @@ jobs:
 
 ## Mise à jour
 
-### CLI (binaire précompilé)
+### Mise à jour automatique (intégrée)
 
-```bash
-# Re-télécharger la dernière version
-curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+MirageIA intègre un système de mise à jour automatique transparent :
 
-# Ou manuellement
-mirageia --version  # vérifier la version actuelle
-# Télécharger la nouvelle depuis GitHub Releases
+```
+Démarrage du proxy
+       │
+       ├── 1. Vérifier s'il y a un binaire stagé dans ~/.mirageia/staging/
+       │      → Si oui : swap avec le binaire courant, message à l'utilisateur
+       │
+       ├── 2. Démarrer le proxy normalement
+       │
+       └── 3. En arrière-plan (après 5s) :
+              → Vérifier la dernière version sur GitHub Releases
+              → Si nouvelle version : télécharger dans ~/.mirageia/staging/
+              → Sera appliquée au prochain démarrage
 ```
 
-### Tauri (installeur)
+**L'utilisateur ne voit rien** — au prochain redémarrage, la nouvelle version est déjà là.
 
-L'installeur Tauri supporte la mise à jour automatique via le plugin `tauri-plugin-updater` :
+### Commande manuelle
 
-1. Au démarrage, MirageIA vérifie s'il y a une nouvelle version sur GitHub Releases
-2. Si oui, notifie l'utilisateur via le tray icon
-3. L'utilisateur clique pour mettre à jour → téléchargement + remplacement automatique
-4. Redémarrage du proxy
+```bash
+# Vérifier si une mise à jour est disponible
+mirageia update --check
+
+# Vérifier, télécharger et appliquer immédiatement
+mirageia update
+```
+
+### Mécanisme de swap
+
+1. Le nouveau binaire est téléchargé dans `~/.mirageia/staging/`
+2. Au démarrage, le binaire courant est renommé en `.old`
+3. Le binaire stagé est copié à l'emplacement courant
+4. `.old` et staging/ sont nettoyés
+5. En cas d'erreur : rollback automatique vers `.old`
+
+### Script d'installation (première installation ou forcer la dernière version)
+
+```bash
+curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+```
 
 ### cargo install
 
