@@ -491,6 +491,64 @@ async fn test_dashboard_returns_html() {
     assert!(body.contains("EventSource"), "Le dashboard doit se connecter au SSE");
 }
 
+// ─── Tests arrêt gracieux ────────────────────────────────────
+
+#[tokio::test]
+async fn test_shutdown_endpoint() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+
+    // Le proxy doit répondre au health
+    let resp = client
+        .get(format!("http://{}/health", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Envoyer le signal d'arrêt
+    let resp = client
+        .post(format!("http://{}/shutdown", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Laisser le temps au serveur de s'arrêter
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Le proxy ne doit plus répondre
+    let result = client
+        .get(format!("http://{}/health", proxy_addr))
+        .send()
+        .await;
+    assert!(result.is_err(), "Le proxy devrait être arrêté");
+}
+
+#[tokio::test]
+async fn test_shutdown_rejects_get() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    // GET sur /shutdown ne doit pas arrêter le proxy
+    let result = client
+        .get(format!("http://{}/shutdown", proxy_addr))
+        .send()
+        .await;
+
+    // Devrait retourner 404 (unknown provider) et le proxy tourne encore
+    let resp = client
+        .get(format!("http://{}/health", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "Le proxy doit encore tourner après un GET /shutdown");
+    drop(result);
+}
+
 // ─── Tests événements enrichis ───────────────────────────────
 
 #[tokio::test]

@@ -86,11 +86,13 @@ pub struct ProxyState {
     pub mapping: Arc<MappingTable>,
     pub generator: Arc<Mutex<PseudonymGenerator>>,
     pub events_tx: broadcast::Sender<ProxyEvent>,
+    pub shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 /// Crée un ProxyState à partir d'une config (pour les tests).
 pub fn create_state(config: AppConfig) -> ProxyState {
     let (events_tx, _) = broadcast::channel(256);
+    let (shutdown_tx, _) = tokio::sync::watch::channel(false);
     ProxyState {
         config,
         client: UpstreamClient::new(),
@@ -98,6 +100,7 @@ pub fn create_state(config: AppConfig) -> ProxyState {
         mapping: Arc::new(MappingTable::new()),
         generator: Arc::new(Mutex::new(PseudonymGenerator::new())),
         events_tx,
+        shutdown_tx,
     }
 }
 
@@ -109,6 +112,7 @@ pub fn create_router(state: Arc<ProxyState>) -> Router {
 /// Démarre le proxy HTTP sur l'adresse configurée.
 pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(create_state(config.clone()));
+    let mut shutdown_rx = state.shutdown_tx.subscribe();
 
     let app = create_router(state);
 
@@ -122,7 +126,12 @@ pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Er
         tracing::info!("MirageIA proxy écoute sur {}", config.listen_addr);
     }
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.wait_for(|&v| v).await;
+            tracing::info!("Arrêt gracieux du proxy...");
+        })
+        .await?;
 
     Ok(())
 }
@@ -144,6 +153,13 @@ async fn proxy_handler(
     request: Request<Body>,
 ) -> Result<Response, ProxyError> {
     let path = request.uri().path().to_string();
+
+    // Arrêt gracieux du proxy
+    if path == "/shutdown" && request.method() == http::Method::POST {
+        tracing::info!("Arrêt du proxy demandé via /shutdown");
+        let _ = state.shutdown_tx.send(true);
+        return Ok((StatusCode::OK, "MirageIA arrêté\n").into_response());
+    }
 
     // Health check
     if path == "/health" {

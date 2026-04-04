@@ -55,6 +55,13 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+
+    /// Arrêter le proxy MirageIA en cours d'exécution
+    Stop {
+        /// Adresse du proxy MirageIA
+        #[arg(short, long, default_value = "http://127.0.0.1:3100")]
+        addr: String,
+    },
 }
 
 #[tokio::main]
@@ -77,6 +84,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Update { check }) => {
             mirageia::update::run_update(check).await?;
+        }
+        Some(Commands::Stop { addr }) => {
+            run_stop(&addr).await?;
         }
         Some(Commands::Proxy { .. }) | None => {
             let passthrough = match &cli.command {
@@ -131,6 +141,25 @@ fn config_exists() -> bool {
     AppConfig::config_file_path()
         .map(|p| p.exists())
         .unwrap_or(false)
+}
+
+async fn run_stop(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    match client.post(format!("{}/shutdown", addr)).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            eprintln!("  ✓ MirageIA arrêté");
+        }
+        Ok(resp) => {
+            eprintln!("  ✗ Réponse inattendue : {}", resp.status());
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("  ✗ MirageIA ne répond pas sur {}", addr);
+            eprintln!("    Le proxy n'est peut-être pas en cours d'exécution.");
+            std::process::exit(1);
+        }
+    }
+    Ok(())
 }
 
 /// Lance une commande enfant avec les variables d'environnement pointant vers le proxy.
