@@ -103,6 +103,7 @@ pub fn pseudonymize_text(
                         &entity.text,
                         &subnet_pseudo_prefixes,
                         generator,
+                        mapping,
                     )
                 } else {
                     generator.generate(&entity.entity_type, &entity.text)
@@ -175,25 +176,56 @@ fn compute_subnet_prefixes(
 /// Génère un pseudonyme IP cohérent avec le sous-réseau si applicable.
 /// Si l'IP fait partie d'un groupe de sous-réseau, utilise le préfixe pseudo commun
 /// et préserve la partie hôte originale.
+///
+/// Vérifie aussi le mapping existant : si une IP dans le même /24 a déjà été
+/// pseudonymisée (dans un champ texte précédent), réutilise le même préfixe pseudo.
 fn generate_subnet_coherent_ip(
     original_ip: &str,
     subnet_prefixes: &HashMap<String, String>,
     generator: &PseudonymGenerator,
+    mapping: &MappingTable,
 ) -> String {
     if original_ip.contains(':') {
         return generator.generate(&PiiType::IpAddress, original_ip);
     }
 
-    if let Some(orig_prefix) = ip_network_prefix(original_ip, 24) {
-        if let Some(pseudo_prefix) = subnet_prefixes.get(&orig_prefix) {
-            if let Some(host) = ip_host_part(original_ip, 24) {
-                return format!("{}.{}", pseudo_prefix, host);
+    let orig_prefix = match ip_network_prefix(original_ip, 24) {
+        Some(p) => p,
+        None => return generator.generate(&PiiType::IpAddress, original_ip),
+    };
+
+    // 1. Vérifier les préfixes pré-calculés du batch courant
+    if let Some(pseudo_prefix) = subnet_prefixes.get(&orig_prefix) {
+        if let Some(host) = ip_host_part(original_ip, 24) {
+            return format!("{}.{}", pseudo_prefix, host);
+        }
+    }
+
+    // 2. Vérifier le mapping existant pour trouver une IP sœur déjà pseudonymisée
+    for (pseudo, original, pii_type) in &mapping.all_entries_with_type() {
+        if *pii_type != PiiType::IpAddress || original.contains(':') {
+            continue;
+        }
+        if let Some(existing_orig_prefix) = ip_network_prefix(original, 24) {
+            if existing_orig_prefix == orig_prefix {
+                // Trouvé une IP sœur ! Extraire le préfixe pseudo utilisé
+                if let Some(existing_pseudo_prefix) = ip_network_prefix(pseudo, 24) {
+                    if let Some(host) = ip_host_part(original_ip, 24) {
+                        return format!("{}.{}", existing_pseudo_prefix, host);
+                    }
+                }
             }
         }
     }
 
-    // Pas de groupement : génération standard
-    generator.generate(&PiiType::IpAddress, original_ip)
+    // 3. Pas de groupement : générer un préfixe aléatoire + préserver la partie hôte
+    // Cela permet la cohérence si une IP sœur arrive dans un appel ultérieur
+    if let Some(host) = ip_host_part(original_ip, 24) {
+        let prefix = generate_pseudo_prefix(24);
+        format!("{}.{}", prefix, host)
+    } else {
+        generator.generate(&PiiType::IpAddress, original_ip)
+    }
 }
 
 #[cfg(test)]
@@ -431,8 +463,13 @@ mod tests {
 
         assert!(!result.contains("192.168.1.50"));
         assert_eq!(records.len(), 1);
-        // Pseudonyme standard dans la plage 10.0.x.x
-        assert!(records[0].pseudonym.starts_with("10.0."));
+        // Le pseudonyme doit être une IPv4 valide avec la partie hôte préservée
+        assert_eq!(records[0].pseudonym.split('.').count(), 4);
+        assert!(
+            records[0].pseudonym.ends_with(".50"),
+            "La partie hôte doit être préservée, got: {}",
+            records[0].pseudonym
+        );
     }
 
     #[test]
@@ -480,5 +517,79 @@ mod tests {
         assert_eq!(records[0].pseudonym.split('.').count(), 4);
         assert_eq!(records[1].pseudonym.split('.').count(), 4);
         let _ = (prefix_0, prefix_1); // utilisation pour éviter le warning
+    }
+
+    #[test]
+    fn test_subnet_coherent_ips_cross_requests() {
+        let mapping = MappingTable::new();
+        let generator = PseudonymGenerator::new();
+
+        // Simuler 3 IPs du même /24 arrivant dans des appels séparés
+        // (comme quand elles sont dans des champs texte différents)
+        let text1 = "Serveur A: 10.0.1.10";
+        let entities1 = vec![PiiEntity {
+            text: "10.0.1.10".to_string(),
+            entity_type: PiiType::IpAddress,
+            start: 11,
+            end: 20,
+            confidence: 0.95,
+        }];
+        let (_, records1) = pseudonymize_text(text1, &entities1, &mapping, &generator);
+
+        let text2 = "Serveur B: 10.0.1.20";
+        let entities2 = vec![PiiEntity {
+            text: "10.0.1.20".to_string(),
+            entity_type: PiiType::IpAddress,
+            start: 11,
+            end: 20,
+            confidence: 0.95,
+        }];
+        let (_, records2) = pseudonymize_text(text2, &entities2, &mapping, &generator);
+
+        let text3 = "Serveur C: 10.0.1.30";
+        let entities3 = vec![PiiEntity {
+            text: "10.0.1.30".to_string(),
+            entity_type: PiiType::IpAddress,
+            start: 11,
+            end: 20,
+            confidence: 0.95,
+        }];
+        let (_, records3) = pseudonymize_text(text3, &entities3, &mapping, &generator);
+
+        // Les 3 pseudonymes doivent partager le même préfixe /24
+        let prefix1 = records1[0]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        let prefix2 = records2[0]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        let prefix3 = records3[0]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(
+            prefix1, prefix2,
+            "Les IPs du même /24 doivent avoir le même préfixe pseudo (cross-requête). Got {} vs {}",
+            records1[0].pseudonym, records2[0].pseudonym
+        );
+        assert_eq!(
+            prefix2, prefix3,
+            "Les IPs du même /24 doivent avoir le même préfixe pseudo (cross-requête). Got {} vs {}",
+            records2[0].pseudonym, records3[0].pseudonym
+        );
+
+        // La partie hôte doit être préservée
+        assert!(records1[0].pseudonym.ends_with(".10"));
+        assert!(records2[0].pseudonym.ends_with(".20"));
+        assert!(records3[0].pseudonym.ends_with(".30"));
     }
 }

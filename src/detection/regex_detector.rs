@@ -248,4 +248,21 @@ mod tests {
         );
         assert_eq!(entities.len(), 1);
     }
+
+    #[test]
+    fn test_whitelist_loopback_excluded() {
+        let whitelist = vec![
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+            "::1".to_string(),
+        ];
+
+        // 127.0.0.1 doit être exclu, 85.123.45.67 doit être détecté
+        let entities = detector().detect_with_whitelist(
+            "Serveur prod: 85.123.45.67, loopback: 127.0.0.1",
+            &whitelist,
+        );
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].text, "85.123.45.67");
+    }
 }

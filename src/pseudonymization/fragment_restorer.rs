@@ -98,12 +98,19 @@ fn decompose_segmented(pseudo: &str, original: &str) -> Vec<FragmentPair> {
 ///   (après `=`, `:`, ou en début de valeur structurée)
 /// - Dédoublonnage : si un même fragment pseudo mappe vers plusieurs originaux
 ///   différents, il est ignoré (ambiguïté)
+/// - Protection des valeurs originales déjà restaurées : les zones contenant des PII
+///   restaurées sont masquées pendant le remplacement de fragments pour éviter
+///   toute corruption (ex: `o'brien` corrompu par un fragment IP `o`)
 pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
     let entries = mapping.all_entries_with_type();
 
     let mut all_fragments: Vec<FragmentPair> = Vec::new();
 
+    // Collecter les valeurs originales pour les protéger
+    let mut originals_to_protect: Vec<String> = Vec::new();
+
     for (pseudo, original, pii_type) in &entries {
+        originals_to_protect.push(original.clone());
         let fragments = decompose_fragments(pseudo, original, *pii_type);
         all_fragments.extend(fragments);
     }
@@ -145,8 +152,24 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
     // Trier par longueur décroissante du fragment pseudo (plus longs d'abord)
     safe_fragments.sort_by(|a, b| b.pseudo_fragment.len().cmp(&a.pseudo_fragment.len()));
 
+    // --- Protection des valeurs originales ---
+    // Remplacer temporairement les valeurs déjà restaurées par des placeholders
+    // pour empêcher le remplacement de fragments de les corrompre.
     let mut result = text.to_string();
+    let mut placeholders: Vec<(String, String)> = Vec::new();
 
+    // Trier par longueur décroissante pour éviter les remplacements partiels
+    let mut sorted_originals = originals_to_protect;
+    sorted_originals.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted_originals.dedup();
+
+    for (i, original) in sorted_originals.iter().enumerate() {
+        let placeholder = format!("\x00PROTECT_{}\x00", i);
+        result = result.replace(original, &placeholder);
+        placeholders.push((placeholder, original.clone()));
+    }
+
+    // --- Remplacement des fragments ---
     for pair in &safe_fragments {
         if pair.pseudo_fragment.len() < 2 {
             // Fragments courts : remplacement contextuel uniquement
@@ -167,6 +190,11 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
                     .to_string();
             }
         }
+    }
+
+    // --- Restauration des valeurs protégées ---
+    for (placeholder, original) in &placeholders {
+        result = result.replace(placeholder, original);
     }
 
     result
@@ -314,5 +342,58 @@ mod tests {
 
         // "10" ne doit PAS être remplacé car ambigu
         assert!(result.contains("10"));
+    }
+
+    #[test]
+    fn test_restored_email_not_corrupted_by_fragments() {
+        let mapping = MappingTable::new();
+        // Un email avec chars spéciaux + une IP dans le même mapping
+        mapping
+            .insert(
+                "o'brien+newsletter@hyphen-domain.co.uk",
+                "julie@example.com",
+                PiiType::Email,
+            )
+            .unwrap();
+        mapping
+            .insert("85.123.45.67", "10.0.84.12", PiiType::IpAddress)
+            .unwrap();
+
+        // Après dé-pseudonymisation principale, les deux valeurs sont restaurées
+        // Le fragment restorer ne doit PAS corrompre l'email restauré
+        let text = "Contact: o'brien+newsletter@hyphen-domain.co.uk, IP: 85.123.45.67, octet: 10";
+        let result = restore_fragments(text, &mapping);
+
+        // L'email doit être intact
+        assert!(
+            result.contains("o'brien+newsletter@hyphen-domain.co.uk"),
+            "L'email restauré a été corrompu : {}",
+            result
+        );
+        // L'IP doit être intacte
+        assert!(result.contains("85.123.45.67"));
+        // Le fragment isolé doit être remplacé
+        assert!(result.contains("octet: 85"));
+    }
+
+    #[test]
+    fn test_restored_ip_not_corrupted_by_fragments() {
+        let mapping = MappingTable::new();
+        mapping
+            .insert("172.16.254.3", "10.0.84.12", PiiType::IpAddress)
+            .unwrap();
+
+        // L'IP complète restaurée ne doit pas être corrompue par le remplacement
+        // de ses propres fragments pseudo
+        let text = "IP: 172.16.254.3, analyse: premier=10, troisième=84";
+        let result = restore_fragments(text, &mapping);
+
+        assert!(
+            result.contains("172.16.254.3"),
+            "L'IP restaurée a été corrompue : {}",
+            result
+        );
+        assert!(result.contains("premier=172"));
+        assert!(result.contains("troisième=254"));
     }
 }

@@ -56,7 +56,11 @@ impl Default for AppConfig {
             anthropic_base_url: "https://api.anthropic.com".to_string(),
             openai_base_url: "https://api.openai.com".to_string(),
             log_level: "info".to_string(),
-            whitelist: Vec::new(),
+            whitelist: vec![
+                "127.0.0.1".to_string(),
+                "localhost".to_string(),
+                "::1".to_string(),
+            ],
             confidence_threshold: 0.75,
             add_header: false,
             fail_open: true,
@@ -94,7 +98,12 @@ impl AppConfig {
                 config.passthrough = pt;
             }
             if !file_config.detection.whitelist.is_empty() {
-                config.whitelist = file_config.detection.whitelist;
+                // Fusionner avec la whitelist par défaut (loopback, etc.)
+                for term in file_config.detection.whitelist {
+                    if !config.whitelist.iter().any(|w| w.eq_ignore_ascii_case(&term)) {
+                        config.whitelist.push(term);
+                    }
+                }
             }
             if let Some(threshold) = file_config.detection.confidence_threshold {
                 config.confidence_threshold = threshold;
@@ -157,7 +166,9 @@ mod tests {
         assert_eq!(config.listen_addr, "127.0.0.1:3100");
         assert_eq!(config.anthropic_base_url, "https://api.anthropic.com");
         assert_eq!(config.openai_base_url, "https://api.openai.com");
-        assert!(config.whitelist.is_empty());
+        assert!(config.whitelist.contains(&"127.0.0.1".to_string()));
+        assert!(config.whitelist.contains(&"localhost".to_string()));
+        assert!(config.whitelist.contains(&"::1".to_string()));
         assert_eq!(config.confidence_threshold, 0.75);
         assert!(config.fail_open);
         assert!(!config.add_header);
