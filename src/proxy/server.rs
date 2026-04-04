@@ -8,6 +8,7 @@ use axum::Router;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
 
 use crate::config::AppConfig;
 use crate::detection::regex_detector::RegexDetector;
@@ -21,22 +22,69 @@ use super::client::UpstreamClient;
 use super::error::ProxyError;
 use super::router;
 
+/// Direction d'un événement proxy (requête ou réponse).
+#[derive(Debug, Clone)]
+pub enum Direction {
+    Request,
+    Response,
+}
+
+impl std::fmt::Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Direction::Request => write!(f, "→"),
+            Direction::Response => write!(f, "←"),
+        }
+    }
+}
+
+/// Événement émis par le proxy pour la console de monitoring.
+#[derive(Debug, Clone)]
+pub struct ProxyEvent {
+    pub timestamp: chrono::DateTime<chrono::Local>,
+    pub provider: String,
+    pub path: String,
+    pub direction: Direction,
+    pub pii_count: usize,
+    pub passthrough: bool,
+}
+
+impl std::fmt::Display for ProxyEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let time = self.timestamp.format("%H:%M:%S");
+        let mode = if self.passthrough { "PASS" } else { "PII " };
+        let pii = if self.pii_count > 0 {
+            format!(" ({} PII)", self.pii_count)
+        } else {
+            String::new()
+        };
+        write!(
+            f,
+            "[{}] {} {} {:<10} {}{}",
+            time, self.direction, mode, self.provider, self.path, pii
+        )
+    }
+}
+
 pub struct ProxyState {
     pub config: AppConfig,
     pub client: UpstreamClient,
     pub detector: RegexDetector,
     pub mapping: Arc<MappingTable>,
     pub generator: Arc<Mutex<PseudonymGenerator>>,
+    pub events_tx: broadcast::Sender<ProxyEvent>,
 }
 
 /// Crée un ProxyState à partir d'une config (pour les tests).
 pub fn create_state(config: AppConfig) -> ProxyState {
+    let (events_tx, _) = broadcast::channel(256);
     ProxyState {
         config,
         client: UpstreamClient::new(),
         detector: RegexDetector::new(),
         mapping: Arc::new(MappingTable::new()),
         generator: Arc::new(Mutex::new(PseudonymGenerator::new())),
+        events_tx,
     }
 }
 
@@ -52,7 +100,14 @@ pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Er
     let app = create_router(state);
 
     let listener = TcpListener::bind(&config.listen_addr).await?;
-    tracing::info!("MirageIA proxy écoute sur {}", config.listen_addr);
+    if config.passthrough {
+        tracing::info!(
+            "MirageIA proxy écoute sur {} (MODE PASSTHROUGH — pas de pseudonymisation)",
+            config.listen_addr
+        );
+    } else {
+        tracing::info!("MirageIA proxy écoute sur {}", config.listen_addr);
+    }
 
     axum::serve(listener, app).await?;
 
@@ -81,9 +136,43 @@ async fn proxy_handler(
     if path == "/health" {
         let stats = serde_json::json!({
             "status": "ok",
+            "passthrough": state.config.passthrough,
             "pii_mappings": state.mapping.len(),
         });
         return Ok((StatusCode::OK, axum::Json(stats)).into_response());
+    }
+
+    // Endpoint SSE pour la console de monitoring
+    if path == "/events" {
+        let mut rx = state.events_tx.subscribe();
+        let stream = async_stream::stream! {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let data = serde_json::json!({
+                            "timestamp": event.timestamp.to_rfc3339(),
+                            "provider": event.provider,
+                            "path": event.path,
+                            "direction": format!("{}", event.direction),
+                            "pii_count": event.pii_count,
+                            "passthrough": event.passthrough,
+                        });
+                        yield Ok::<_, std::io::Error>(
+                            format!("data: {}\n\n", data)
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        };
+        let body = Body::from_stream(stream);
+        return Response::builder()
+            .status(200)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .body(body)
+            .map_err(|e| ProxyError::Http(e.to_string()));
     }
 
     // Résoudre le provider
@@ -108,23 +197,68 @@ async fn proxy_handler(
         .await
         .map_err(|e| ProxyError::Body(e.to_string()))?;
 
+    // --- MODE PASSTHROUGH : relayer sans pseudonymiser ---
+    if state.config.passthrough {
+        tracing::debug!(
+            provider = ?provider,
+            url = %upstream_url,
+            "Mode passthrough — requête relayée sans pseudonymisation"
+        );
+
+        // Émettre un événement console
+        let _ = state.events_tx.send(ProxyEvent {
+            timestamp: chrono::Local::now(),
+            provider: format!("{:?}", provider),
+            path: path.clone(),
+            direction: Direction::Request,
+            pii_count: 0,
+            passthrough: true,
+        });
+
+        let upstream_response = state
+            .client
+            .forward(method, &upstream_url, upstream_headers, Bytes::from(body_bytes.to_vec()))
+            .await?;
+
+        let _ = state.events_tx.send(ProxyEvent {
+            timestamp: chrono::Local::now(),
+            provider: format!("{:?}", provider),
+            path: path.clone(),
+            direction: Direction::Response,
+            pii_count: 0,
+            passthrough: true,
+        });
+
+        return build_passthrough_response(upstream_response).await;
+    }
+
     // --- PSEUDONYMISATION DE LA REQUÊTE (fail-open) ---
-    let (final_body, was_pseudonymized) =
+    let (final_body, was_pseudonymized, pii_count) =
         match pseudonymize_request(&body_bytes, provider, &state) {
-            Ok((new_body, true)) => {
+            Ok((new_body, true, count)) => {
                 tracing::info!(
                     provider = ?provider,
                     mappings = state.mapping.len(),
                     "Requête pseudonymisée"
                 );
-                (new_body, true)
+                (new_body, true, count)
             }
-            Ok((body, false)) => (body, false),
+            Ok((body, false, _)) => (body, false, 0),
             Err(e) => {
                 tracing::warn!("Pseudonymisation échouée, passthrough : {}", e);
-                (body_bytes.to_vec(), false)
+                (body_bytes.to_vec(), false, 0)
             }
         };
+
+    // Émettre un événement console (requête)
+    let _ = state.events_tx.send(ProxyEvent {
+        timestamp: chrono::Local::now(),
+        provider: format!("{:?}", provider),
+        path: path.clone(),
+        direction: Direction::Request,
+        pii_count,
+        passthrough: false,
+    });
 
     tracing::debug!(
         provider = ?provider,
@@ -140,6 +274,16 @@ async fn proxy_handler(
         .forward(method, &upstream_url, upstream_headers, Bytes::from(final_body))
         .await?;
 
+    // Émettre un événement console (réponse)
+    let _ = state.events_tx.send(ProxyEvent {
+        timestamp: chrono::Local::now(),
+        provider: format!("{:?}", provider),
+        path: path.clone(),
+        direction: Direction::Response,
+        pii_count: 0,
+        passthrough: false,
+    });
+
     // --- DÉ-PSEUDONYMISATION DE LA RÉPONSE ---
     if was_pseudonymized {
         build_depseudonymized_response(upstream_response, provider, &state).await
@@ -149,19 +293,19 @@ async fn proxy_handler(
 }
 
 /// Pseudonymise le body de la requête.
-/// Retourne (nouveau body, true si des PII ont été remplacées).
+/// Retourne (nouveau body, true si des PII ont été remplacées, nombre de PII).
 fn pseudonymize_request(
     body_bytes: &[u8],
     provider: router::Provider,
     state: &ProxyState,
-) -> Result<(Vec<u8>, bool), String> {
+) -> Result<(Vec<u8>, bool, usize), String> {
     let body: serde_json::Value =
         serde_json::from_slice(body_bytes).map_err(|e| format!("JSON invalide : {}", e))?;
 
     let text_fields = extract_text_fields(&body, provider);
 
     if text_fields.is_empty() {
-        return Ok((body_bytes.to_vec(), false));
+        return Ok((body_bytes.to_vec(), false, 0));
     }
 
     let mut replacements: Vec<(JsonPath, String)> = Vec::new();
@@ -183,7 +327,7 @@ fn pseudonymize_request(
     drop(generator);
 
     if replacements.is_empty() {
-        return Ok((body_bytes.to_vec(), false));
+        return Ok((body_bytes.to_vec(), false, 0));
     }
 
     tracing::info!(pii_count = total_pii, "PII détectées dans la requête");
@@ -191,7 +335,7 @@ fn pseudonymize_request(
     let new_body = rebuild_body(&body, &replacements);
     let new_body_bytes = serde_json::to_vec(&new_body).map_err(|e| e.to_string())?;
 
-    Ok((new_body_bytes, true))
+    Ok((new_body_bytes, true, total_pii))
 }
 
 /// Construit une réponse avec dé-pseudonymisation.

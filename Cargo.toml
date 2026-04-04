@@ -26,11 +26,13 @@ ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = tr
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 
 # Phase 3 — Pseudonymisation
+async-stream = "0.3"
 aes-gcm = "0.10"
 aho-corasick = "1"
 regex = "1"
 rand = "0.8"
 sha2 = "0.10"
+chrono = "0.4"
 dialoguer = "0.11"
 toml = "0.8"
 toml_edit = "0.22"

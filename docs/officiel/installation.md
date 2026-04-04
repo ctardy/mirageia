@@ -103,7 +103,7 @@ Le binaire se trouve dans `target/release/mirageia.exe` (ou `target/debug/mirage
 # Lancer les tests
 cargo test
 
-# Résultat attendu : 133 tests passent, 0 échec
+# Résultat attendu : 144 tests passent, 0 échec
 ```
 
 ---
@@ -183,12 +183,63 @@ Première utilisation ? Lancez `mirageia setup` pour la configuration guidée.
 
 Le proxy démarre quand même avec les défauts — le setup n'est pas obligatoire.
 
+### Activation par session (recommandé)
+
+Plutôt que de configurer le proxy globalement dans votre shell, utilisez `mirageia wrap` pour activer le proxy uniquement sur une session donnée :
+
+```bash
+# Terminal 1 — Lancer le proxy
+mirageia
+
+# Terminal 2 — Lancer Claude Code via le proxy
+mirageia wrap -- claude
+```
+
+`wrap` vérifie que le proxy tourne, puis lance la commande avec `ANTHROPIC_BASE_URL` et `OPENAI_BASE_URL` pointant vers le proxy. Quand la commande se termine, les variables d'environnement disparaissent.
+
+Avantage : si le proxy est arrêté, les apps lancées normalement (`claude`) fonctionnent toujours directement vers l'API.
+
+### Monitoring en temps réel
+
+```bash
+# Dans un terminal séparé
+mirageia console
+```
+
+Affiche chaque requête qui transite par le proxy, avec le nombre de PII détectées :
+```
+  [14:32:01] → PII  Anthropic  /v1/messages (3 PII détectées)
+  [14:32:02] ← PII  Anthropic  /v1/messages
+```
+
+### Mode passthrough (désactivation temporaire)
+
+Pour relayer les requêtes **sans pseudonymiser** (debug, test de performance) :
+
+```bash
+# Par flag CLI
+mirageia proxy --passthrough
+
+# Par variable d'environnement
+MIRAGEIA_PASSTHROUGH=1 mirageia
+
+# Par config.toml
+# [proxy]
+# passthrough = true
+```
+
+Le health check indique le mode actif :
+```bash
+curl http://localhost:3100/health
+# → {"status":"ok","passthrough":true,"pii_mappings":0}
+```
+
 ### Vérification
 
 ```bash
 # Health check
 curl http://localhost:3100/health
-# → {"status":"ok","pii_mappings":0}
+# → {"status":"ok","passthrough":false,"pii_mappings":0}
 
 # Test avec des PII (nécessite une clé API)
 curl -X POST http://localhost:3100/v1/messages \

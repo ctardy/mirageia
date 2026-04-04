@@ -12,7 +12,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Lancer le proxy HTTP (comportement par défaut)
-    Proxy,
+    Proxy {
+        /// Mode passthrough : relayer sans pseudonymiser
+        #[arg(long)]
+        passthrough: bool,
+    },
 
     /// Assistant de configuration interactif
     Setup,
@@ -25,6 +29,24 @@ enum Commands {
         /// Nom du modèle dans ~/.mirageia/models/
         #[arg(short, long, default_value = "piiranha")]
         model: String,
+    },
+
+    /// Lancer une commande avec le proxy activé (activation par session)
+    Wrap {
+        /// Commande à exécuter (ex: claude, python, curl)
+        #[arg(trailing_var_arg = true, required = true)]
+        command: Vec<String>,
+
+        /// Port du proxy MirageIA
+        #[arg(short, long, default_value = "3100")]
+        port: u16,
+    },
+
+    /// Afficher les requêtes en temps réel (console de monitoring)
+    Console {
+        /// Adresse du proxy MirageIA
+        #[arg(short, long, default_value = "http://127.0.0.1:3100")]
+        addr: String,
     },
 }
 
@@ -40,8 +62,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             init_tracing("info");
             run_detect(&text, &model)?;
         }
-        Some(Commands::Proxy) | None => {
-            let config = AppConfig::from_env();
+        Some(Commands::Wrap { command, port }) => {
+            run_wrap(command, port).await?;
+        }
+        Some(Commands::Console { addr }) => {
+            run_console(&addr).await?;
+        }
+        Some(Commands::Proxy { .. }) | None => {
+            let passthrough = match &cli.command {
+                Some(Commands::Proxy { passthrough }) => *passthrough,
+                _ => false,
+            };
+
+            let mut config = AppConfig::from_env();
+            if passthrough {
+                config.passthrough = true;
+            }
             init_tracing(&config.log_level);
 
             // Au premier lancement, proposer le setup si pas de config
@@ -71,6 +107,140 @@ fn config_exists() -> bool {
     AppConfig::config_file_path()
         .map(|p| p.exists())
         .unwrap_or(false)
+}
+
+/// Lance une commande enfant avec les variables d'environnement pointant vers le proxy.
+async fn run_wrap(command: Vec<String>, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let proxy_url = format!("http://127.0.0.1:{}", port);
+
+    // Vérifier que le proxy tourne
+    match reqwest::get(&format!("{}/health", proxy_url)).await {
+        Ok(resp) if resp.status().is_success() => {
+            let health: serde_json::Value = resp.json().await?;
+            let mode = if health["passthrough"].as_bool().unwrap_or(false) {
+                "passthrough"
+            } else {
+                "pseudonymisation"
+            };
+            eprintln!("  ✓ MirageIA actif sur {} (mode {})", proxy_url, mode);
+        }
+        _ => {
+            eprintln!("  ✗ MirageIA ne répond pas sur {}", proxy_url);
+            eprintln!("    Lancez d'abord : mirageia");
+            std::process::exit(1);
+        }
+    }
+
+    let (program, args) = command.split_first().expect("Commande vide");
+
+    eprintln!(
+        "  → Lancement de '{}' avec proxy MirageIA activé",
+        command.join(" ")
+    );
+    eprintln!();
+
+    let status = std::process::Command::new(program)
+        .args(args)
+        .env("ANTHROPIC_BASE_URL", &proxy_url)
+        .env("OPENAI_BASE_URL", &proxy_url)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()?;
+
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Se connecte au flux SSE /events du proxy et affiche les événements en temps réel.
+async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let events_url = format!("{}/events", addr);
+
+    // Vérifier que le proxy tourne
+    match reqwest::get(&format!("{}/health", addr)).await {
+        Ok(resp) if resp.status().is_success() => {
+            let health: serde_json::Value = resp.json().await?;
+            let mode = if health["passthrough"].as_bool().unwrap_or(false) {
+                "PASSTHROUGH"
+            } else {
+                "PSEUDONYMISATION"
+            };
+            let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
+            eprintln!("  ╔══════════════════════════════════════════╗");
+            eprintln!("  ║  MirageIA Console                       ║");
+            eprintln!("  ╚══════════════════════════════════════════╝");
+            eprintln!();
+            eprintln!("  Proxy      : {}", addr);
+            eprintln!("  Mode       : {}", mode);
+            eprintln!("  Mappings   : {}", mappings);
+            eprintln!();
+            eprintln!("  En attente de requêtes... (Ctrl+C pour quitter)");
+            eprintln!("  ─────────────────────────────────────────────────");
+        }
+        _ => {
+            eprintln!("  ✗ MirageIA ne répond pas sur {}", addr);
+            eprintln!("    Lancez d'abord : mirageia");
+            std::process::exit(1);
+        }
+    }
+
+    // Se connecter au flux SSE
+    let response = reqwest::get(&events_url).await?;
+    let mut stream = response.bytes_stream();
+
+    use futures_util::StreamExt;
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Traiter chaque événement SSE complet
+        while let Some(pos) = buffer.find("\n\n") {
+            let event = buffer[..pos].to_string();
+            buffer = buffer[pos + 2..].to_string();
+
+            if let Some(data) = event.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    print_event(&json);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_event(event: &serde_json::Value) {
+    let timestamp = event["timestamp"]
+        .as_str()
+        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .map(|dt| dt.format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "??:??:??".to_string());
+
+    let direction = event["direction"].as_str().unwrap_or("?");
+    let provider = event["provider"].as_str().unwrap_or("???");
+    let path = event["path"].as_str().unwrap_or("/");
+    let pii_count = event["pii_count"].as_u64().unwrap_or(0);
+    let passthrough = event["passthrough"].as_bool().unwrap_or(false);
+
+    let mode = if passthrough { "PASS" } else { "PII " };
+
+    let pii_info = if pii_count > 0 {
+        format!(" \x1b[33m({} PII détectées)\x1b[0m", pii_count)
+    } else {
+        String::new()
+    };
+
+    let dir_colored = if direction == "→" {
+        format!("\x1b[36m{}\x1b[0m", direction) // cyan pour requête
+    } else {
+        format!("\x1b[32m{}\x1b[0m", direction) // vert pour réponse
+    };
+
+    eprintln!(
+        "  [{}] {} {} {:<10} {}{}",
+        timestamp, dir_colored, mode, provider, path, pii_info
+    );
 }
 
 #[cfg(feature = "onnx")]

@@ -63,11 +63,29 @@ mirageia setup
 # Lancer le proxy
 mirageia
 
-# Ou depuis les sources :
-cargo run
+# Utiliser Claude Code via le proxy (juste cette session)
+mirageia wrap -- claude
 
-# Utilisez Claude Code, votre SDK ou curl normalement.
-# MirageIA intercepte, pseudonymise, et restaure automatiquement.
+# Surveiller les requêtes en temps réel (dans un autre terminal)
+mirageia console
+```
+
+**Activation par session** — `mirageia wrap` lance votre commande avec le proxy activé, sans modifier votre shell. Quand la commande se termine, le proxy n'est plus utilisé :
+
+```bash
+mirageia wrap -- claude          # Claude Code protégé
+mirageia wrap -- python app.py   # Script Python protégé
+claude                           # Claude Code direct (sans proxy)
+```
+
+### Désactiver temporairement
+
+```bash
+# Option 1 : Mode passthrough (le proxy relaie sans pseudonymiser)
+mirageia proxy --passthrough
+
+# Option 2 : Arrêter le proxy — n'affecte PAS les apps lancées normalement
+# Seules celles lancées via `mirageia wrap` passent par le proxy
 ```
 
 ### Vérification
@@ -75,6 +93,7 @@ cargo run
 ```bash
 # Health check
 curl http://localhost:3100/health
+# → {"status":"ok","passthrough":false,"pii_mappings":0}
 
 # Requête test (nécessite une clé API Anthropic)
 curl -X POST http://localhost:3100/v1/messages \
@@ -101,6 +120,7 @@ listen_addr = "127.0.0.1:3100"  # Adresse d'écoute
 log_level = "info"               # debug, info, warn, error
 add_header = false               # Ajouter X-MirageIA: active aux requêtes
 fail_open = true                 # Transmettre la requête si la pseudonymisation échoue
+passthrough = false              # Mode passthrough : relayer sans pseudonymiser
 
 [detection]
 confidence_threshold = 0.75      # Seuil de confiance (0.0–1.0)
@@ -119,6 +139,7 @@ Les variables d'environnement prennent le dessus sur le fichier :
 | `MIRAGEIA_ANTHROPIC_URL` | URL de base Anthropic |
 | `MIRAGEIA_OPENAI_URL` | URL de base OpenAI |
 | `MIRAGEIA_LOG_LEVEL` | Niveau de log |
+| `MIRAGEIA_PASSTHROUGH` | Activer le mode passthrough (toute valeur = activé) |
 
 ---
 
@@ -145,7 +166,7 @@ Le détecteur ONNX contextuel (v2, en cours) ajoutera la détection de noms de p
 
 ```
 src/
-├── main.rs                  CLI (proxy / detect)
+├── main.rs                  CLI (proxy / setup / detect / wrap / console)
 ├── lib.rs                   Modules publics
 ├── config/
 │   └── settings.rs          AppConfig, chargement TOML + env
@@ -212,7 +233,7 @@ RÉPONSE CLIENT (données originales restaurées)
 ## Tests
 
 ```bash
-# Tous les tests (133)
+# Tous les tests (144)
 cargo test
 
 # Tests unitaires uniquement
@@ -231,7 +252,7 @@ cargo test -- pseudonymization
 
 | Module | Tests | Couverture |
 |---|---:|---|
-| config | 5 | Config par défaut, parsing TOML, partiel, vide |
+| config | 6 | Config par défaut, parsing TOML, partiel, vide, passthrough |
 | proxy/router | 7 | Routage Anthropic/OpenAI, URLs |
 | proxy/extractor | 9 | Extraction/rebuild JSON, content string/array, system |
 | detection/types | 7 | Labels, seuils, aliases, display |
@@ -247,8 +268,8 @@ cargo test -- pseudonymization
 | pseudonymization/depseudonymizer | 6 | Roundtrip, longest-first |
 | streaming/sse_parser | 7 | Anthropic, OpenAI, DONE, rebuild |
 | streaming/buffer | 7 | Split pseudonyme, flush |
-| **e2e** | **7** | **Pipeline complet avec mock upstream** |
-| **Total** | **133** | |
+| **e2e** | **11** | **Pipeline complet, passthrough, events SSE** |
+| **Total** | **144** | |
 
 ---
 
@@ -262,7 +283,10 @@ cargo test -- pseudonymization
 | Dé-pseudonymisation réponses | ✅ Terminé | Non-streaming + SSE buffer |
 | Configuration TOML + whitelist | ✅ Terminé | ~/.mirageia/config.toml |
 | Fail-open | ✅ Terminé | Passthrough si erreur |
-| Tests e2e | ✅ Terminé | 133 tests |
+| Mode passthrough | ✅ Terminé | `--passthrough` / config / env var |
+| Activation par session | ✅ Terminé | `mirageia wrap -- claude` |
+| Console de monitoring | ✅ Terminé | `mirageia console` (SSE temps réel) |
+| Tests e2e | ✅ Terminé | 144 tests |
 | Détection ONNX contextuelle | 🔧 Structuré | Code prêt, ONNX Runtime bloqué par toolchain MSVC |
 | Dashboard Tauri | 📋 Planifié | Phase 4 |
 

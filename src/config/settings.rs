@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub add_header: bool,
     /// Mode fail-open : si true, transmet la requête non modifiée en cas d'erreur.
     pub fail_open: bool,
+    /// Mode passthrough : si true, le proxy relaie sans pseudonymiser.
+    pub passthrough: bool,
 }
 
 /// Structure du fichier config.toml (désérialisable).
@@ -37,6 +39,7 @@ struct ProxyFileConfig {
     log_level: Option<String>,
     add_header: Option<bool>,
     fail_open: Option<bool>,
+    passthrough: Option<bool>,
 }
 
 impl Default for ProxyFileConfig {
@@ -48,6 +51,7 @@ impl Default for ProxyFileConfig {
             log_level: None,
             add_header: None,
             fail_open: None,
+            passthrough: None,
         }
     }
 }
@@ -79,6 +83,7 @@ impl Default for AppConfig {
             confidence_threshold: 0.75,
             add_header: false,
             fail_open: true,
+            passthrough: false,
         }
     }
 }
@@ -108,6 +113,9 @@ impl AppConfig {
             if let Some(fo) = file_config.proxy.fail_open {
                 config.fail_open = fo;
             }
+            if let Some(pt) = file_config.proxy.passthrough {
+                config.passthrough = pt;
+            }
             if !file_config.detection.whitelist.is_empty() {
                 config.whitelist = file_config.detection.whitelist;
             }
@@ -128,6 +136,9 @@ impl AppConfig {
         }
         if let Ok(level) = env::var("MIRAGEIA_LOG_LEVEL") {
             config.log_level = level;
+        }
+        if env::var("MIRAGEIA_PASSTHROUGH").is_ok() {
+            config.passthrough = true;
         }
 
         config
@@ -173,6 +184,7 @@ mod tests {
         assert_eq!(config.confidence_threshold, 0.75);
         assert!(config.fail_open);
         assert!(!config.add_header);
+        assert!(!config.passthrough);
     }
 
     #[test]
@@ -217,6 +229,16 @@ whitelist = ["Einstein"]
 
         assert!(file_config.proxy.listen_addr.is_none());
         assert_eq!(file_config.detection.whitelist, vec!["Einstein"]);
+    }
+
+    #[test]
+    fn test_parse_passthrough_config_toml() {
+        let toml_str = r#"
+[proxy]
+passthrough = true
+"#;
+        let file_config: FileConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(file_config.proxy.passthrough, Some(true));
     }
 
     #[test]

@@ -70,4 +70,4 @@ Le code est organisé en 7 modules Rust :
 | `streaming` | `src/streaming/buffer.rs` | Buffer SSE pour pseudonymes split entre tokens |
 | `detection` (ONNX) | `src/detection/model.rs` | Modèle ONNX (feature-gated, v2) |
 
-133 tests couvrent l'ensemble du pipeline (voir [README principal](../README.md#tests)).
+144 tests couvrent l'ensemble du pipeline (voir [README principal](../README.md#tests)).

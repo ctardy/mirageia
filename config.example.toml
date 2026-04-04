@@ -9,6 +9,7 @@
 # log_level = "info"                           # debug, info, warn, error
 # add_header = false                           # Ajouter le header X-MirageIA: active
 # fail_open = true                             # Transmettre la requête si la pseudonymisation échoue
+# passthrough = false                          # Mode passthrough : relayer sans pseudonymiser
 
 [detection]
 # confidence_threshold = 0.75                  # Seuil de confiance pour la détection (0.0–1.0)

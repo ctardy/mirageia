@@ -32,6 +32,29 @@ Le proxy détermine le provider cible à partir du path :
 |----------|---------|-----------|
 | `/v1/chat/completions` | POST | Oui (SSE) |
 
+### Endpoints internes MirageIA
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/health` | GET | État du proxy : `{"status":"ok","passthrough":false,"pii_mappings":0}` |
+| `/events` | GET | Flux SSE temps réel des requêtes (pour `mirageia console`) |
+
+## Mode passthrough
+
+Le proxy peut relayer les requêtes **sans pseudonymiser**, utile pour le debug ou la désactivation temporaire :
+
+```bash
+mirageia proxy --passthrough        # Flag CLI
+MIRAGEIA_PASSTHROUGH=1 mirageia     # Variable d'environnement
+```
+
+Ou dans `config.toml` :
+```toml
+[proxy]
+passthrough = true
+```
+
+En mode passthrough, les requêtes sont transmises telles quelles à l'API. Les événements sont quand même émis sur `/events` (marqués `passthrough: true`).
+
 ## Gestion du streaming SSE
 
 Les API LLM utilisent le Server-Sent Events pour streamer les réponses token par token. Le proxy doit :
@@ -61,9 +84,47 @@ Buffer:        accumule "Ger" → "Gerard" reconnu → remplace par "Tardy" → 
 - MirageIA ajoute un header `X-MirageIA: active` pour traçabilité (optionnel, désactivable)
 - Le `Content-Length` est recalculé après pseudonymisation
 
+## Commandes CLI
+
+| Commande | Description |
+|----------|-------------|
+| `mirageia` | Lancer le proxy (comportement par défaut) |
+| `mirageia proxy --passthrough` | Lancer en mode passthrough |
+| `mirageia setup` | Assistant de configuration interactif |
+| `mirageia wrap -- <cmd>` | Lancer une commande avec le proxy activé (activation par session) |
+| `mirageia console` | Afficher les requêtes en temps réel (se connecte au flux `/events`) |
+| `mirageia detect <texte>` | Détecter les PII dans un texte (nécessite `--features onnx`) |
+
+### `mirageia wrap`
+
+Lance un processus enfant avec `ANTHROPIC_BASE_URL` et `OPENAI_BASE_URL` pointant vers le proxy. Vérifie d'abord que le proxy est actif via `/health`.
+
+```bash
+# Lancer Claude Code protégé par MirageIA
+mirageia wrap -- claude
+
+# Lancer un script Python protégé
+mirageia wrap -- python app.py
+
+# Spécifier un port différent
+mirageia wrap --port 4200 -- claude
+```
+
+### `mirageia console`
+
+Se connecte au endpoint `/events` SSE du proxy et affiche les événements formatés :
+
+```
+  [14:32:01] → PII  Anthropic  /v1/messages (3 PII détectées)
+  [14:32:02] ← PII  Anthropic  /v1/messages
+  [14:35:10] → PASS OpenAI     /v1/chat/completions
+  [14:35:11] ← PASS OpenAI     /v1/chat/completions
+```
+
 ## Stack technique
 
-- **Rust** : `axum` ou `hyper` pour le serveur HTTP
+- **Rust** : `axum` pour le serveur HTTP
 - **reqwest** : client HTTP pour appeler les API en amont
-- **tokio** : runtime async
-- **eventsource-stream** : parsing SSE pour le streaming
+- **tokio** : runtime async + broadcast channel pour les événements
+- **async-stream** : génération de flux SSE pour `/events`
+- **chrono** : horodatage des événements

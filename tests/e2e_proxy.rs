@@ -67,9 +67,15 @@ async fn start_mock_upstream() -> (SocketAddr, Arc<tokio::sync::Mutex<Option<ser
 
 /// Lance le proxy MirageIA pointant vers le mock upstream.
 async fn start_proxy(upstream_addr: SocketAddr) -> SocketAddr {
+    start_proxy_with_config(upstream_addr, false).await
+}
+
+/// Lance le proxy MirageIA avec option passthrough.
+async fn start_proxy_with_config(upstream_addr: SocketAddr, passthrough: bool) -> SocketAddr {
     let mut config = mirageia::config::AppConfig::default();
     config.listen_addr = "127.0.0.1:0".to_string();
     config.anthropic_base_url = format!("http://{}", upstream_addr);
+    config.passthrough = passthrough;
 
     let state = Arc::new(mirageia::proxy::create_state(config));
     let app = mirageia::proxy::create_router(state);
@@ -305,4 +311,159 @@ async fn test_unknown_path_returns_404() {
         .unwrap();
 
     assert_eq!(resp.status(), 404);
+}
+
+// ─── Tests mode passthrough ───────────────────────────────────
+
+#[tokio::test]
+async fn test_passthrough_mode_no_pseudonymization() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy_with_config(upstream_addr, true).await;
+
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 100,
+        "messages": [{
+            "role": "user",
+            "content": "Email: alice@corp.com, IP: 172.16.0.1"
+        }]
+    });
+
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
+    // En mode passthrough, les PII ne sont PAS pseudonymisées
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap();
+
+    assert!(
+        sent.contains("alice@corp.com"),
+        "En passthrough, l'email DOIT rester tel quel. Reçu: {}",
+        sent
+    );
+    assert!(
+        sent.contains("172.16.0.1"),
+        "En passthrough, l'IP DOIT rester telle quelle. Reçu: {}",
+        sent
+    );
+}
+
+#[tokio::test]
+async fn test_health_shows_passthrough_status() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy_with_config(upstream_addr, true).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{}/health", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["passthrough"], true);
+}
+
+// ─── Tests endpoint /events (console) ─────────────────────────
+
+#[tokio::test]
+async fn test_events_endpoint_returns_sse() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{}/events", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("text/event-stream"),
+        "Le endpoint /events doit retourner du SSE"
+    );
+}
+
+#[tokio::test]
+async fn test_events_emitted_on_request() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+
+    // Créer le proxy manuellement pour accéder au events_tx
+    let mut config = mirageia::config::AppConfig::default();
+    config.listen_addr = "127.0.0.1:0".to_string();
+    config.anthropic_base_url = format!("http://{}", upstream_addr);
+
+    let state = Arc::new(mirageia::proxy::create_state(config));
+    let mut events_rx = state.events_tx.subscribe();
+    let app = mirageia::proxy::create_router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Envoyer une requête avec PII
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 100,
+        "messages": [{
+            "role": "user",
+            "content": "Email: test@example.org"
+        }]
+    });
+
+    client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    // Vérifier qu'on reçoit des événements (requête + réponse)
+    let event1 = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout en attendant l'événement")
+    .expect("Erreur de réception");
+
+    assert_eq!(event1.provider, "Anthropic");
+    assert_eq!(event1.path, "/v1/messages");
+    assert!(!event1.passthrough);
+
+    let event2 = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout en attendant l'événement réponse")
+    .expect("Erreur de réception");
+
+    assert_eq!(event2.provider, "Anthropic");
 }
