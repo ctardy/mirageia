@@ -4,6 +4,7 @@ pub mod postprocess;
 pub mod regex_detector;
 pub mod tokenizer;
 pub mod types;
+pub mod validator;
 
 pub use types::{PiiEntity, PiiType};
 

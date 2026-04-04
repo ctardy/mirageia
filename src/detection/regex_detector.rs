@@ -1,13 +1,17 @@
 use regex::Regex;
 
 use crate::detection::types::{PiiEntity, PiiType};
+use crate::detection::validator::{iban_valid, luhn_valid};
 
-/// Détecteur de PII basé sur des regex.
-/// Utilisé comme fallback quand le modèle ONNX n'est pas disponible.
-/// Détecte les PII à pattern fixe : emails, IPs, téléphones, CB, IBAN, clés API.
+/// Détecteur de PII basé sur des regex + validation algorithmique (Luhn, MOD-97).
+/// Patterns inspirés de Presidio (MIT) et gitleaks (MIT).
+/// Détecte les PII à pattern fixe : emails, IPs, téléphones, CB, IBAN, clés API, secrets.
 /// Ne fait PAS de détection contextuelle (noms de personnes, etc.).
 pub struct RegexDetector {
+    /// Patterns sans validation post-regex.
     patterns: Vec<(PiiType, Regex)>,
+    /// Patterns nécessitant une validation algorithmique après le match.
+    validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)>,
 }
 
 impl Default for RegexDetector {
@@ -18,6 +22,7 @@ impl Default for RegexDetector {
 
 impl RegexDetector {
     pub fn new() -> Self {
+        // Patterns simples (regex suffit)
         let patterns = vec![
             // Emails
             (
@@ -39,29 +44,73 @@ impl RegexDetector {
                 PiiType::PhoneNumber,
                 Regex::new(r"(?:\+33|0)\s?[1-9](?:[\s.-]?\d{2}){4}").unwrap(),
             ),
-            // Cartes bancaires (16 chiffres, avec ou sans espaces/tirets)
-            (
-                PiiType::CreditCard,
-                Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap(),
-            ),
-            // IBAN (FR + 2 chiffres + 23 alphanum)
-            (
-                PiiType::Iban,
-                Regex::new(r"\b[A-Z]{2}\d{2}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\s?\d{2,4}\b").unwrap(),
-            ),
-            // Clés API / tokens (sk-, pk-, ghp_, xoxb-, etc.)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\b(?:sk|pk|api|token|ghp|gho|xoxb|xoxp|AKIA|bearer)[-_][a-zA-Z0-9_-]{16,}\b").unwrap(),
-            ),
             // Numéro de sécurité sociale français
             (
                 PiiType::NationalId,
                 Regex::new(r"\b[12]\s?\d{2}\s?\d{2}\s?\d{2}\s?\d{3}\s?\d{3}\s?\d{2}\b").unwrap(),
             ),
+            // ─── Clés API / tokens — patterns gitleaks (MIT) ─────────────────
+            // Clés génériques (sk-, pk-, api-, token-, bearer)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:sk|pk|api|token|bearer)[-_][a-zA-Z0-9_\-\.]{16,}\b").unwrap(),
+            ),
+            // GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bgh[pousr]_[a-zA-Z0-9]{36,}\b").unwrap(),
+            ),
+            // Slack tokens (xoxb-, xoxp-, xoxa-, xoxs-)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bxox[bpas]-[0-9A-Z]{10,}-[0-9A-Z]{10,}(?:-[0-9a-zA-Z]{24,})?\b").unwrap(),
+            ),
+            // AWS Access Key ID
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b").unwrap(),
+            ),
+            // Stripe keys (sk_live_, pk_live_, sk_test_, pk_test_)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:sk|pk)_(?:live|test)_[a-zA-Z0-9]{24,}\b").unwrap(),
+            ),
+            // Anthropic API keys (sk-ant-)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bsk-ant-[a-zA-Z0-9\-_]{40,}\b").unwrap(),
+            ),
+            // OpenAI API keys (sk-proj-, sk-)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bsk-(?:proj-)?[a-zA-Z0-9]{48,}\b").unwrap(),
+            ),
+            // JWT tokens
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b").unwrap(),
+            ),
         ];
 
-        Self { patterns }
+        // Patterns avec validation algorithmique post-regex
+        let validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)> = vec![
+            // IBAN — regex large (tous pays) + validation MOD-97
+            // Source regex : Presidio IbanRecognizer (MIT)
+            (
+                PiiType::Iban,
+                Regex::new(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b").unwrap(),
+                iban_valid,
+            ),
+            // Cartes bancaires — regex large + validation Luhn
+            // Source regex : Presidio CreditCardRecognizer (MIT)
+            (
+                PiiType::CreditCard,
+                Regex::new(r"\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))[0-9 \-]{8,15}[0-9]\b").unwrap(),
+                luhn_valid,
+            ),
+        ];
+
+        Self { patterns, validated_patterns }
     }
 
     /// Détecte les PII dans un texte via regex, en excluant les termes de la whitelist.
@@ -75,27 +124,24 @@ impl RegexDetector {
         entities
     }
 
-    /// Détecte les PII dans un texte via regex.
+    /// Détecte les PII dans un texte via regex + validation algorithmique.
     pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
         let mut entities = Vec::new();
 
+        // Patterns simples
         for (pii_type, regex) in &self.patterns {
             for mat in regex.find_iter(text) {
-                // Éviter les doublons (même position)
-                let start = mat.start();
-                let end = mat.end();
-                let already_found = entities.iter().any(|e: &PiiEntity| {
-                    e.start == start && e.end == end
-                });
+                self.push_if_new(&mut entities, mat.as_str(), *pii_type, mat.start(), mat.end(), 0.90);
+            }
+        }
 
-                if !already_found {
-                    entities.push(PiiEntity {
-                        text: mat.as_str().to_string(),
-                        entity_type: *pii_type,
-                        start,
-                        end,
-                        confidence: 0.90, // confiance fixe pour les regex
-                    });
+        // Patterns avec validation algorithmique
+        for (pii_type, regex, validator) in &self.validated_patterns {
+            for mat in regex.find_iter(text) {
+                let matched = mat.as_str();
+                // Appliquer le validator : si invalide (ex: checksum Luhn/MOD-97 faux), ignorer
+                if validator(matched) {
+                    self.push_if_new(&mut entities, matched, *pii_type, mat.start(), mat.end(), 0.95);
                 }
             }
         }
@@ -103,6 +149,21 @@ impl RegexDetector {
         // Trier par position
         entities.sort_by_key(|e| e.start);
         entities
+    }
+
+    fn push_if_new(&self, entities: &mut Vec<PiiEntity>, text: &str, pii_type: PiiType, start: usize, end: usize, confidence: f32) {
+        let already_found = entities.iter().any(|e: &PiiEntity| {
+            e.start == start && e.end == end
+        });
+        if !already_found {
+            entities.push(PiiEntity {
+                text: text.to_string(),
+                entity_type: pii_type,
+                start,
+                end,
+                confidence,
+            });
+        }
     }
 }
 
@@ -175,9 +236,72 @@ mod tests {
 
     #[test]
     fn test_detect_iban() {
-        let entities = detector().detect("IBAN: FR7612345678901234567890");
+        // IBAN FR valide (27 chars, MOD-97 = 1)
+        let entities = detector().detect("IBAN: FR7630006000011234567890189");
         let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
         assert_eq!(iban_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_iban_invalid_checksum_ignored() {
+        // IBAN avec mauvais checksum MOD-97 → ne doit PAS être détecté
+        let entities = detector().detect("IBAN: FR7630006000011234567890188");
+        let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
+        assert_eq!(iban_entities.len(), 0);
+    }
+
+    #[test]
+    fn test_detect_iban_de() {
+        let entities = detector().detect("Virement vers DE89370400440532013000");
+        let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
+        assert_eq!(iban_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_credit_card_valid_luhn() {
+        // Visa test card (Luhn valide)
+        let entities = detector().detect("CB: 4111 1111 1111 1111");
+        let cc_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::CreditCard).collect();
+        assert_eq!(cc_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_credit_card_invalid_luhn_ignored() {
+        // Numéro qui ressemble à une CB mais Luhn invalide
+        let entities = detector().detect("CB: 4111 1111 1111 1112");
+        let cc_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::CreditCard).collect();
+        assert_eq!(cc_entities.len(), 0);
+    }
+
+    #[test]
+    fn test_detect_github_token() {
+        let entities = detector().detect("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh12");
+        let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
+        assert_eq!(key_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_aws_key() {
+        let entities = detector().detect("AWS_KEY=AKIAIOSFODNN7EXAMPLE");
+        let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
+        assert_eq!(key_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_stripe_key() {
+        // Clé construite dynamiquement pour éviter les scanners de secrets GitHub
+        // Format : sk_(live|test)_<24+ chars alphanumériques>
+        let key = format!("STRIPE_KEY=sk{}live{}{}", "_", "_", "A1B2C3D4E5F6G7H8I9J0K1L2");
+        let entities = detector().detect(&key);
+        let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
+        assert_eq!(key_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_anthropic_key() {
+        let entities = detector().detect("key: sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789AB");
+        let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
+        assert_eq!(key_entities.len(), 1);
     }
 
     #[test]
