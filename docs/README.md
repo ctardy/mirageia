@@ -22,6 +22,7 @@ docs/
 ## Guides pratiques
 
 - **[Installation](officiel/installation.md)** — Prérequis, installation Rust/GCC, build, premier lancement, résolution de problèmes
+- **[Déploiement ops (Docker + Apache)](officiel/deploiement-ops.md)** — Docker, reverse proxy Apache, dashboard web, monitoring, sécurité
 - **[Distribution & installeur](officiel/distribution.md)** — Binaires précompilés, script d'install, installeur Tauri, CI/CD, mise à jour
 - **[Contribution & mise à jour](officiel/contribution.md)** — Workflow dev, comment ajouter un type PII, modifier le pipeline, process de release
 

@@ -268,8 +268,8 @@ cargo test -- pseudonymization
 | pseudonymization/depseudonymizer | 6 | Roundtrip, longest-first |
 | streaming/sse_parser | 7 | Anthropic, OpenAI, DONE, rebuild |
 | streaming/buffer | 7 | Split pseudonyme, flush |
-| **e2e** | **11** | **Pipeline complet, passthrough, events SSE** |
-| **Total** | **144** | |
+| **e2e** | **12** | **Pipeline complet, passthrough, events SSE, dashboard** |
+| **Total** | **145** | |
 
 ---
 
@@ -286,7 +286,9 @@ cargo test -- pseudonymization
 | Mode passthrough | ✅ Terminé | `--passthrough` / config / env var |
 | Activation par session | ✅ Terminé | `mirageia wrap -- claude` |
 | Console de monitoring | ✅ Terminé | `mirageia console` (SSE temps réel) |
-| Tests e2e | ✅ Terminé | 144 tests |
+| Dashboard web | ✅ Terminé | `/dashboard` embarqué dans le binaire |
+| Docker + déploiement | ✅ Terminé | Dockerfile, guide ops, Apache reverse proxy |
+| Tests e2e | ✅ Terminé | 145 tests |
 | Détection ONNX contextuelle | 🔧 Structuré | Code prêt, ONNX Runtime bloqué par toolchain MSVC |
 | Dashboard Tauri | 📋 Planifié | Phase 4 |
 
@@ -297,6 +299,7 @@ cargo test -- pseudonymization
 | Sujet | Lien |
 |-------|------|
 | **Installation** | [`docs/officiel/installation.md`](docs/officiel/installation.md) |
+| **Déploiement ops (Docker + Apache)** | [`docs/officiel/deploiement-ops.md`](docs/officiel/deploiement-ops.md) |
 | **Distribution & installeur** | [`docs/officiel/distribution.md`](docs/officiel/distribution.md) |
 | **Guide de contribution** | [`docs/officiel/contribution.md`](docs/officiel/contribution.md) |
 | Architecture globale | [`docs/officiel/architecture/vue-ensemble.md`](docs/officiel/architecture/vue-ensemble.md) |
