@@ -347,8 +347,8 @@ fn print_event(event: &serde_json::Value) {
     } else {
         // Ligne réponse : direction, status, provider, path, latence, streaming
         let status_str = match status_code {
-            Some(code) if code >= 200 && code < 300 => format!("\x1b[32m{}\x1b[0m", code),
-            Some(code) if code >= 400 && code < 500 => format!("\x1b[33m{}\x1b[0m", code),
+            Some(code) if (200..300).contains(&code) => format!("\x1b[32m{}\x1b[0m", code),
+            Some(code) if (400..500).contains(&code) => format!("\x1b[33m{}\x1b[0m", code),
             Some(code) if code >= 500 => format!("\x1b[31m{}\x1b[0m", code),
             Some(code) => format!("{}", code),
             None => "???".to_string(),
