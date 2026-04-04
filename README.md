@@ -35,24 +35,22 @@ The LLM works with fake but consistent data — its response is just as relevant
 
 ## Quick Start
 
-### Prerequisites
+### Install
 
-- [Rust](https://rustup.rs/) (1.75+)
-- GCC (via MSYS2 on Windows) or MSVC toolchain
-
-### Installation
+Download the binary for your OS from [GitHub Releases](https://github.com/ctardy/mirageia/releases/latest):
 
 ```bash
-git clone https://github.com/ctardy/mirageia.git
-cd mirageia
+# Linux / macOS
+curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-linux-x86_64.tar.gz \
+  | tar xz -C ~/.local/bin/
 
-# On Windows with MSYS2:
-export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"
-
-cargo build --release
+# Or from source (requires Rust 1.75+)
+git clone https://github.com/ctardy/mirageia.git && cd mirageia && cargo build --release
 ```
 
-### Guided Setup
+On Windows, download `mirageia-windows-x86_64.zip` from the [Releases](https://github.com/ctardy/mirageia/releases/latest) page.
+
+### Setup
 
 ```bash
 # The wizard guides you: port, LLM providers, whitelist, shell

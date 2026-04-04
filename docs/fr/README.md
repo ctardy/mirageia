@@ -35,22 +35,20 @@ Le LLM travaille avec des données fictives mais cohérentes — sa réponse est
 
 ## Démarrage rapide
 
-### Prérequis
-
-- [Rust](https://rustup.rs/) (1.75+)
-- GCC (via MSYS2 sur Windows) ou toolchain MSVC
-
 ### Installation
 
+Téléchargez le binaire pour votre OS depuis [GitHub Releases](https://github.com/ctardy/mirageia/releases/latest) :
+
 ```bash
-git clone https://github.com/ctardy/mirageia.git
-cd mirageia
+# Linux / macOS
+curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-linux-x86_64.tar.gz \
+  | tar xz -C ~/.local/bin/
 
-# Sur Windows avec MSYS2 :
-export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"
-
-cargo build --release
+# Ou depuis les sources (nécessite Rust 1.75+)
+git clone https://github.com/ctardy/mirageia.git && cd mirageia && cargo build --release
 ```
+
+Sur Windows, téléchargez `mirageia-windows-x86_64.zip` depuis la page [Releases](https://github.com/ctardy/mirageia/releases/latest).
 
 ### Configuration guidée
 

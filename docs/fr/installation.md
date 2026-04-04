@@ -2,14 +2,39 @@
 
 ## Installation rapide
 
-```bash
-# 1. Installer MirageIA (depuis les sources ou binaire précompilé)
-cargo install --path .
+### Option A — Binaire précompilé (recommandé)
 
-# 2. Lancer l'assistant de configuration
+Téléchargez le binaire pour votre OS depuis [GitHub Releases](https://github.com/ctardy/mirageia/releases/latest) :
+
+```bash
+# Linux / macOS
+curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-linux-x86_64.tar.gz \
+  | tar xz -C ~/.local/bin/
+
+# Vérifier
+mirageia --version
+```
+
+Sur Windows, téléchargez `mirageia-windows-x86_64.zip` depuis la page Releases et extrayez `mirageia.exe` dans un dossier de votre PATH.
+
+### Option B — Depuis les sources
+
+Si vous avez Rust installé :
+
+```bash
+git clone https://github.com/ctardy/mirageia.git
+cd mirageia
+cargo build --release
+# Le binaire est dans target/release/mirageia(.exe)
+```
+
+### Premiers pas
+
+```bash
+# 1. Lancer l'assistant de configuration
 mirageia setup
 
-# 3. Démarrer le proxy
+# 2. Démarrer le proxy
 mirageia
 ```
 
