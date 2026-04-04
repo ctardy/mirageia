@@ -51,10 +51,73 @@ docker build -t mirageia .
 
 L'image contient :
 - Ubuntu 24.04
-- MirageIA (binaire précompilé depuis GitHub Releases)
-- Node.js 22 + Claude Code (pour les tests)
+- MirageIA (binaire téléchargé depuis GitHub Releases **à chaque démarrage**)
+- Node.js 22 + Claude Code
+- ttyd (terminal web WebSocket)
+- docker CLI (pour les tests Docker-in-Docker via socket)
 
-Taille de l'image : ~300 Mo.
+Taille de l'image : ~500 Mo.
+
+### Mise à jour du binaire MirageIA (sans rebuild)
+
+L'entrypoint télécharge automatiquement la dernière release à chaque `docker restart` :
+
+```bash
+# Après un git tag + push, attendre que le CI publie la release (~3 min), puis :
+docker restart mirageia
+# Le nouveau binaire est automatiquement récupéré au redémarrage
+```
+
+Pour vérifier la version active :
+```bash
+docker exec mirageia mirageia --version
+```
+
+### Déploiement via Docker Compose (recommandé)
+
+Fichier `docker-compose.yml` de référence :
+
+```yaml
+services:
+  mirageia:
+    build:
+      context: /opt/projet/mirageia
+      dockerfile: docker/Dockerfile
+    image: mirageia:latest
+    container_name: mirageia
+    restart: unless-stopped
+    env_file:
+      - /opt/docker/conf/secrets.env   # ANTHROPIC_API_KEY
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - ./home/.claude:/root/.claude        # tokens OAuth Claude Code persistés
+      - ./home/.claude.json:/root/.claude.json
+      - ./home/.local:/root/.local
+      - /opt/projet/mirageia:/workspace     # source Rust montée pour cargo test
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - DAC_OVERRIDE   # nécessaire pour /var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G        # minimum 1G — Claude Code avec agents parallèles ~500MB
+        reservations:
+          memory: 256M
+```
+
+> **Attention mémoire** : la limite mémoire doit être d'au moins **1 GB**. Claude Code avec agents parallèles consomme ~500 MB. Une limite à 256 MB provoque des OOM kills silencieux (`Killed`).
 
 ### Lancer le container
 
@@ -64,7 +127,9 @@ docker run -d \
   --name mirageia \
   --restart unless-stopped \
   -p 127.0.0.1:3100:3100 \
+  -p 127.0.0.1:7681:7681 \
   -e ANTHROPIC_API_KEY=sk-ant-XXXXXXXXX \
+  --memory=1g \
   mirageia
 
 # Vérifier que ça tourne
@@ -74,7 +139,28 @@ curl http://127.0.0.1:3100/health
 
 Réponse attendue du health check :
 ```json
-{"status": "ok", "passthrough": false, "pii_mappings": 0}
+{"status": "ok", "passthrough": false, "pii_mappings": 0, "version": "0.4.3"}
+```
+
+### Terminal web (ttyd)
+
+Le container expose un terminal web sur le port **7681** (chemin `/mirageia/`).
+ttyd est lancé avec `--ping-interval 30` pour maintenir la connexion WebSocket.
+
+Si déployé derrière Apache, configurer un timeout long sur le ProxyPass :
+
+```apache
+# IMPORTANT : timeout=3600 pour éviter la coupure WebSocket après 2 min
+ProxyPass /mirageia/ http://mirageia:7681/mirageia/ timeout=3600
+ProxyPassReverse /mirageia/ http://mirageia:7681/mirageia/
+```
+
+Commandes disponibles depuis le terminal web :
+```
+mirageia wrap -- claude    Lance Claude Code via le proxy
+claude                     Lance Claude Code directement
+mirageia console           Monitoring temps réel
+curl localhost:3100/health Health check
 ```
 
 ### Lancer en mode interactif (tests)
@@ -84,14 +170,6 @@ docker run -it --rm \
   -p 127.0.0.1:3100:3100 \
   -e ANTHROPIC_API_KEY=sk-ant-XXXXXXXXX \
   mirageia
-```
-
-Le container affiche un menu avec les commandes disponibles :
-```
-  mirageia wrap -- claude    Lance Claude Code via le proxy
-  claude                     Lance Claude Code directement (sans proxy)
-  mirageia console           Monitoring temps réel
-  curl localhost:3100/health Health check
 ```
 
 ---
@@ -426,3 +504,14 @@ docker restart mirageia
 # Stop
 docker stop mirageia && docker rm mirageia
 ```
+
+---
+
+## Historique des versions
+
+| Version | Date | Changements |
+|---------|------|-------------|
+| v0.4.3 | 04/04/2026 | Fix faux positif PHONE_NUMBER sur les chiffres d'une clé API (réordonnancement des patterns : API keys avant téléphone) |
+| v0.4.2 | 04/04/2026 | Ajout validateurs IBAN (MOD-97), Luhn (CB), entropie de Shannon + patterns secrets (GitHub, AWS, Stripe, Anthropic, OpenAI, JWT, Slack) |
+| v0.4.1 | 04/04/2026 | Fix panic UTF-8 dans StreamBuffer (`rfind` → `char_indices().rev()`) ; fix champs SSE enrichis absents de la release v0.4.0 |
+| v0.4.0 | 2026 | Version initiale déployée |

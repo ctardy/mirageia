@@ -8,8 +8,8 @@
 │                                                         │
 │  ┌──────────┐    ┌──────────────┐    ┌───────────────┐  │
 │  │  Proxy   │───▶│  Détecteur   │───▶│ Pseudonymiseur│  │
-│  │  HTTP    │    │  PII (ONNX)  │    │               │  │
-│  │          │◀───│              │◀───│  Mapping table │  │
+│  │  HTTP    │    │  PII (Regex) │    │               │  │
+│  │          │◀───│  + Luhn/MOD97│◀───│  Mapping table │  │
 │  └──────────┘    └──────────────┘    └───────────────┘  │
 │       ▲                                     │           │
 │       │              ┌──────────┐           │           │
@@ -35,12 +35,13 @@
 - L'application cliente est configurée pour pointer vers le proxy au lieu de l'API directe
 - Gestion transparente des headers d'authentification (API keys passées telles quelles)
 
-### 2. Détecteur PII (modèle ONNX embarqué)
-- Modèle de langage embarqué directement dans le binaire via ONNX Runtime
-- Pas de serveur externe (Ollama, etc.) — tout tourne dans le processus
-- Détection contextuelle : comprend la sémantique, pas juste du pattern matching
-- Modèle cible : DistilBERT-PII (~260 Mo) ou Qwen3 0.6B quantifié (~400 Mo)
-- Latence cible : < 50ms par requête
+### 2. Détecteur PII (Regex + validation algorithmique)
+- Détection basée sur des regex combinées à des validateurs de checksum (MOD-97 pour les IBAN, Luhn pour les cartes bancaires)
+- Patterns clés API : Anthropic, OpenAI, Stripe, GitHub, AWS, Slack, JWT (inspirés de gitleaks MIT)
+- Entropie de Shannon pour détecter les secrets génériques à haute entropie
+- Pas de serveur externe, tout tourne dans le processus — un seul binaire autonome
+- Latence : < 5ms par requête (regex uniquement, pas d'inférence neuronale)
+- **Phase suivante** : détection contextuelle par modèle ONNX embarqué (DistilBERT-PII ou Qwen3 0.6B) — voir `docs/fr/technique/modele-pii.md`
 
 ### 3. Pseudonymiseur + Table de mapping
 - Remplace chaque PII détectée par une valeur fictive cohérente (même type de donnée)

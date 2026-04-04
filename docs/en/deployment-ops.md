@@ -51,10 +51,73 @@ docker build -t mirageia .
 
 The image contains:
 - Ubuntu 24.04
-- MirageIA (precompiled binary from GitHub Releases)
-- Node.js 22 + Claude Code (for testing)
+- MirageIA (binary downloaded from GitHub Releases **at each startup**)
+- Node.js 22 + Claude Code
+- ttyd (WebSocket web terminal)
+- docker CLI (for Docker-in-Docker testing via socket)
 
-Image size: ~300 MB.
+Image size: ~500 MB.
+
+### Updating the MirageIA binary (without rebuild)
+
+The entrypoint automatically downloads the latest release on each `docker restart`:
+
+```bash
+# After a git tag + push, wait for CI to publish the release (~3 min), then:
+docker restart mirageia
+# The new binary is automatically fetched on restart
+```
+
+To check the active version:
+```bash
+docker exec mirageia mirageia --version
+```
+
+### Deployment via Docker Compose (recommended)
+
+Reference `docker-compose.yml`:
+
+```yaml
+services:
+  mirageia:
+    build:
+      context: /opt/projet/mirageia
+      dockerfile: docker/Dockerfile
+    image: mirageia:latest
+    container_name: mirageia
+    restart: unless-stopped
+    env_file:
+      - /opt/docker/conf/secrets.env   # ANTHROPIC_API_KEY
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - ./home/.claude:/root/.claude        # persisted Claude Code OAuth tokens
+      - ./home/.claude.json:/root/.claude.json
+      - ./home/.local:/root/.local
+      - /opt/projet/mirageia:/workspace     # Rust source for cargo test
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - DAC_OVERRIDE   # required for /var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G        # minimum 1G — Claude Code with parallel agents ~500MB
+        reservations:
+          memory: 256M
+```
+
+> **Memory warning**: the memory limit must be at least **1 GB**. Claude Code with parallel agents uses ~500 MB. A 256 MB limit causes silent OOM kills (`Killed`).
 
 ### Start the container
 
@@ -64,7 +127,9 @@ docker run -d \
   --name mirageia \
   --restart unless-stopped \
   -p 127.0.0.1:3100:3100 \
+  -p 127.0.0.1:7681:7681 \
   -e ANTHROPIC_API_KEY=sk-ant-XXXXXXXXX \
+  --memory=1g \
   mirageia
 
 # Verify it is running
@@ -74,7 +139,28 @@ curl http://127.0.0.1:3100/health
 
 Expected health check response:
 ```json
-{"status": "ok", "passthrough": false, "pii_mappings": 0}
+{"status": "ok", "passthrough": false, "pii_mappings": 0, "version": "0.4.3"}
+```
+
+### Web terminal (ttyd)
+
+The container exposes a web terminal on port **7681** (path `/mirageia/`).
+ttyd is launched with `--ping-interval 30` to maintain the WebSocket connection.
+
+If deployed behind Apache, configure a long timeout on the ProxyPass:
+
+```apache
+# IMPORTANT: timeout=3600 to prevent WebSocket disconnection after 2 min
+ProxyPass /mirageia/ http://mirageia:7681/mirageia/ timeout=3600
+ProxyPassReverse /mirageia/ http://mirageia:7681/mirageia/
+```
+
+Available commands from the web terminal:
+```
+mirageia wrap -- claude    Launch Claude Code through the proxy
+claude                     Launch Claude Code directly
+mirageia console           Real-time monitoring
+curl localhost:3100/health Health check
 ```
 
 ### Start in interactive mode (testing)
@@ -426,3 +512,14 @@ docker restart mirageia
 # Stop
 docker stop mirageia && docker rm mirageia
 ```
+
+---
+
+## Version history
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v0.4.3 | 2026-04-04 | Fix PHONE_NUMBER false positive on API key digits (pattern reordering: API keys before phone) |
+| v0.4.2 | 2026-04-04 | Added IBAN (MOD-97) and credit card (Luhn) validators, Shannon entropy, secret patterns (GitHub, AWS, Stripe, Anthropic, OpenAI, JWT, Slack) |
+| v0.4.1 | 2026-04-04 | Fix UTF-8 panic in StreamBuffer (`rfind` → `char_indices().rev()`); fix missing enriched SSE fields in v0.4.0 release binary |
+| v0.4.0 | 2026 | Initial deployed version |

@@ -74,8 +74,19 @@ Le SPB détecte ces fragments et les remplace par les sous-parties correspondant
 
 ### Streaming SSE
 - Les réponses LLM arrivent token par token
-- Le dé-pseudonymiseur maintient un buffer pour détecter les pseudonymes multi-tokens
+- Le dé-pseudonymiseur maintient un buffer (`StreamBuffer`) pour détecter les pseudonymes multi-tokens
 - Ex: si le pseudonyme est "Gerard", il peut arriver en "Ger" + "ard" → buffer nécessaire
+- **Fix UTF-8 (v0.4.1)** : le point de coupure du buffer doit respecter les frontières multi-octets des caractères Unicode (ex: `é` = 2 octets). L'algorithme utilise `char_indices().rev()` + `c.len_utf8()` pour trouver le dernier espace valide au lieu d'un simple `rfind(char::is_whitespace)` qui pouvait couper en milieu de caractère et paniquer (`byte index N is not a char boundary`).
+
+```rust
+// Correct — respecte les frontières UTF-8
+let cut_point = buffer[..flush_up_to]
+    .char_indices()
+    .rev()
+    .find(|(_, c)| c.is_whitespace())
+    .map(|(pos, c)| pos + c.len_utf8())
+    .unwrap_or(flush_up_to);
+```
 
 ### Pseudonymes multi-mots
 - "Jean-Pierre Dupont" → "Michel Martin" (le mapping porte sur l'entité complète)
