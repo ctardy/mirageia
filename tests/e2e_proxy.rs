@@ -467,3 +467,26 @@ async fn test_events_emitted_on_request() {
 
     assert_eq!(event2.provider, "Anthropic");
 }
+
+// ─── Tests dashboard web ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_dashboard_returns_html() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{}/dashboard", proxy_addr))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/html"), "Le dashboard doit retourner du HTML");
+
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("MirageIA"), "Le dashboard doit contenir le titre");
+    assert!(body.contains("EventSource"), "Le dashboard doit se connecter au SSE");
+}

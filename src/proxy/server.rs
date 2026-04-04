@@ -175,6 +175,15 @@ async fn proxy_handler(
             .map_err(|e| ProxyError::Http(e.to_string()));
     }
 
+    // Dashboard web
+    if path == "/dashboard" {
+        return Response::builder()
+            .status(200)
+            .header("content-type", "text/html; charset=utf-8")
+            .body(Body::from(DASHBOARD_HTML))
+            .map_err(|e| ProxyError::Http(e.to_string()));
+    }
+
     // Résoudre le provider
     let provider = router::resolve_provider(&path)
         .ok_or_else(|| ProxyError::UnknownProvider(path.clone()))?;
@@ -508,3 +517,273 @@ async fn build_passthrough_response(upstream: reqwest::Response) -> Result<Respo
             .map_err(|e| ProxyError::Http(e.to_string()))
     }
 }
+
+/// Page HTML du dashboard de monitoring, embarquée dans le binaire.
+const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MirageIA — Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e0e0e0;
+    --muted: #888;
+    --accent: #6c8cff;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --cyan: #22d3ee;
+    --red: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 1.4em; font-weight: 600; }
+  h1 span { color: var(--accent); }
+  .status {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85em;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  .dot.off { background: var(--red); animation: none; }
+  .dot.pass { background: var(--yellow); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card-label { font-size: 0.75em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 1.8em; font-weight: 700; margin-top: 4px; }
+  .card-value.accent { color: var(--accent); }
+  .card-value.green { color: var(--green); }
+  .card-value.yellow { color: var(--yellow); }
+  .card-value.cyan { color: var(--cyan); }
+  .events-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .events-header h2 { font-size: 1em; }
+  .btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.8em;
+  }
+  .btn:hover { border-color: var(--accent); }
+  #events {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .event-row {
+    display: grid;
+    grid-template-columns: 80px 30px 50px 90px 1fr 100px;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85em;
+    align-items: center;
+    animation: fadeIn 0.3s ease;
+  }
+  .event-row:last-child { border-bottom: none; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+  .dir-req { color: var(--cyan); }
+  .dir-res { color: var(--green); }
+  .mode-pii { color: var(--accent); font-weight: 600; }
+  .mode-pass { color: var(--yellow); }
+  .pii-badge {
+    background: rgba(250, 204, 21, 0.15);
+    color: var(--yellow);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    white-space: nowrap;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-state .icon { font-size: 2em; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>MirageIA</span> Dashboard</h1>
+  <div class="status">
+    <div class="status-item">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Connexion...</span>
+    </div>
+  </div>
+</header>
+
+<div class="cards">
+  <div class="card">
+    <div class="card-label">Requetes</div>
+    <div class="card-value accent" id="totalRequests">0</div>
+  </div>
+  <div class="card">
+    <div class="card-label">PII detectees</div>
+    <div class="card-value yellow" id="totalPii">0</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Mappings actifs</div>
+    <div class="card-value cyan" id="mappings">0</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Mode</div>
+    <div class="card-value green" id="mode">-</div>
+  </div>
+</div>
+
+<div class="events-header">
+  <h2>Flux temps reel</h2>
+  <button class="btn" onclick="clearEvents()">Effacer</button>
+</div>
+
+<div id="events">
+  <div class="empty-state" id="emptyState">
+    <div class="icon">~</div>
+    <div>En attente de requetes...</div>
+  </div>
+</div>
+
+<script>
+let totalRequests = 0;
+let totalPii = 0;
+
+// Health check periodique
+async function checkHealth() {
+  try {
+    const r = await fetch('/health');
+    const h = await r.json();
+    document.getElementById('statusDot').className = 'dot';
+    document.getElementById('statusText').textContent = 'Actif';
+    document.getElementById('mappings').textContent = h.pii_mappings || 0;
+    document.getElementById('mode').textContent = h.passthrough ? 'PASS' : 'PII';
+    document.getElementById('mode').className = 'card-value ' + (h.passthrough ? 'yellow' : 'green');
+  } catch {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = 'Deconnecte';
+  }
+}
+checkHealth();
+setInterval(checkHealth, 3000);
+
+// Flux SSE
+const evtSource = new EventSource('/events');
+evtSource.onmessage = function(e) {
+  try {
+    const evt = JSON.parse(e.data);
+    addEvent(evt);
+  } catch {}
+};
+evtSource.onerror = function() {
+  document.getElementById('statusDot').className = 'dot off';
+  document.getElementById('statusText').textContent = 'SSE deconnecte';
+};
+
+function addEvent(evt) {
+  const container = document.getElementById('events');
+  const empty = document.getElementById('emptyState');
+  if (empty) empty.remove();
+
+  if (evt.direction === '\u2192') {
+    totalRequests++;
+    document.getElementById('totalRequests').textContent = totalRequests;
+  }
+
+  if (evt.pii_count > 0) {
+    totalPii += evt.pii_count;
+    document.getElementById('totalPii').textContent = totalPii;
+  }
+
+  const time = new Date(evt.timestamp).toLocaleTimeString('fr-FR');
+  const isReq = evt.direction === '\u2192';
+  const dirClass = isReq ? 'dir-req' : 'dir-res';
+  const modeClass = evt.passthrough ? 'mode-pass' : 'mode-pii';
+  const modeText = evt.passthrough ? 'PASS' : 'PII';
+  const piiHtml = evt.pii_count > 0
+    ? `<span class="pii-badge">${evt.pii_count} PII</span>`
+    : '';
+
+  const row = document.createElement('div');
+  row.className = 'event-row';
+  row.innerHTML = `
+    <span>${time}</span>
+    <span class="${dirClass}">${evt.direction}</span>
+    <span class="${modeClass}">${modeText}</span>
+    <span>${evt.provider}</span>
+    <span>${evt.path}</span>
+    <span>${piiHtml}</span>
+  `;
+
+  container.insertBefore(row, container.firstChild);
+
+  // Limiter a 200 lignes
+  while (container.children.length > 200) {
+    container.removeChild(container.lastChild);
+  }
+}
+
+function clearEvents() {
+  const container = document.getElementById('events');
+  container.innerHTML = '<div class="empty-state" id="emptyState"><div class="icon">~</div><div>En attente de requetes...</div></div>';
+  totalRequests = 0;
+  totalPii = 0;
+  document.getElementById('totalRequests').textContent = '0';
+  document.getElementById('totalPii').textContent = '0';
+}
+</script>
+</body>
+</html>"##;
