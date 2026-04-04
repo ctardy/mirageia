@@ -1,0 +1,20 @@
+# ~/.mirageia/config.toml
+# Configuration MirageIA — toutes les options sont optionnelles.
+# Copiez ce fichier dans ~/.mirageia/config.toml et décommentez les lignes souhaitées.
+
+[proxy]
+# listen_addr = "127.0.0.1:3100"              # Adresse d'écoute du proxy
+# anthropic_base_url = "https://api.anthropic.com"
+# openai_base_url = "https://api.openai.com"
+# log_level = "info"                           # debug, info, warn, error
+# add_header = false                           # Ajouter le header X-MirageIA: active
+# fail_open = true                             # Transmettre la requête si la pseudonymisation échoue
+
+[detection]
+# confidence_threshold = 0.75                  # Seuil de confiance pour la détection (0.0–1.0)
+# whitelist = [                                # Termes à ne jamais pseudonymiser
+#     "localhost",
+#     "127.0.0.1",
+#     "example.com",
+#     "Thomas Edison",
+# ]

@@ -1,0 +1,44 @@
+[package]
+name = "mirageia"
+version = "0.1.0"
+edition = "2021"
+description = "Proxy de pseudonymisation intelligent pour API LLM"
+license = "MIT"
+
+[dependencies]
+axum = "0.7"
+bytes = "1"
+futures-util = "0.3"
+http = "1"
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Phase 2 — Détection PII
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+ndarray = "0.16"
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+# Phase 3 — Pseudonymisation
+aes-gcm = "0.10"
+aho-corasick = "1"
+regex = "1"
+rand = "0.8"
+sha2 = "0.10"
+dialoguer = "0.11"
+toml = "0.8"
+toml_edit = "0.22"
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []
+onnx = ["ort"]
