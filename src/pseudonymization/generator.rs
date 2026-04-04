@@ -8,6 +8,12 @@ pub struct PseudonymGenerator {
     dictionaries: Dictionaries,
 }
 
+impl Default for PseudonymGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PseudonymGenerator {
     pub fn new() -> Self {
         Self {
@@ -204,7 +210,7 @@ pub fn luhn_valid(number: &str) -> bool {
         }
         sum += val;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 #[cfg(test)]

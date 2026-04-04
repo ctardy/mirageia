@@ -20,12 +20,19 @@ pub struct MappingEntry {
 /// Table de mapping bidirectionnelle chiffrée.
 /// - Clé `by_original_hash` : SHA-256 de la valeur originale → entrée
 /// - Clé `by_pseudonym` : pseudonyme → entrée
+///
 /// Thread-safe via RwLock.
 pub struct MappingTable {
     by_original_hash: RwLock<HashMap<[u8; 32], MappingEntry>>,
     by_pseudonym: RwLock<HashMap<String, MappingEntry>>,
     crypto: CryptoEngine,
     next_id: AtomicU64,
+}
+
+impl Default for MappingTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MappingTable {

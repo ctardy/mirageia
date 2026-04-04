@@ -10,6 +10,12 @@ pub struct CryptoEngine {
     key_bytes: [u8; 32],
 }
 
+impl Default for CryptoEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CryptoEngine {
     /// Génère une nouvelle clé aléatoire.
     pub fn new() -> Self {

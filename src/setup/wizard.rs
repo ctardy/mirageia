@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use dialoguer::{Confirm, Input, MultiSelect, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, Input, MultiSelect, theme::ColorfulTheme};
 
 /// Résultat de l'assistant de configuration.
 #[derive(Debug)]
@@ -48,12 +48,10 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     println!();
 
     // --- Étape 3 : Choix des providers LLM ---
-    let provider_options = vec![
-        ("Anthropic (Claude)", "https://api.anthropic.com", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
+    let provider_options = [("Anthropic (Claude)", "https://api.anthropic.com", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
         ("OpenAI (GPT)", "https://api.openai.com", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
         ("Google Gemini", "https://generativelanguage.googleapis.com", "GEMINI_BASE_URL", "GEMINI_API_KEY"),
-        ("Mistral AI", "https://api.mistral.ai", "MISTRAL_BASE_URL", "MISTRAL_API_KEY"),
-    ];
+        ("Mistral AI", "https://api.mistral.ai", "MISTRAL_BASE_URL", "MISTRAL_API_KEY")];
 
     let display_options: Vec<String> = provider_options
         .iter()

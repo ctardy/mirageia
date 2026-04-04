@@ -435,7 +435,7 @@ async fn build_depseudonymized_response(
                         }
                     }
                     Some(Err(e)) => {
-                        let err = std::io::Error::new(std::io::ErrorKind::Other, e);
+                        let err = std::io::Error::other(e);
                         Some((Err(err), (stream, buffer, mapping, provider, done)))
                     }
                     None => {
@@ -494,7 +494,7 @@ async fn build_passthrough_response(upstream: reqwest::Response) -> Result<Respo
 
     if is_sse {
         let byte_stream = upstream.bytes_stream().map(|result| {
-            result.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            result.map_err(std::io::Error::other)
         });
         let body = Body::from_stream(byte_stream);
         response_builder

@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: mirageia-windows-x86_64
+            binary: mirageia.exe
+            archive: zip
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: mirageia-macos-aarch64
+            binary: mirageia
+            archive: tar.gz
+
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: mirageia-linux-x86_64
+            binary: mirageia
+            archive: tar.gz
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} staging/
+          cp config.example.toml staging/
+          cp README.md staging/
+          cd staging
+          7z a ../${{ matrix.artifact }}.zip .
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} staging/
+          cp config.example.toml staging/
+          cp README.md staging/
+          cd staging
+          tar czf ../${{ matrix.artifact }}.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.${{ matrix.archive }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/mirageia-windows-x86_64/mirageia-windows-x86_64.zip
+            artifacts/mirageia-macos-aarch64/mirageia-macos-aarch64.tar.gz
+            artifacts/mirageia-linux-x86_64/mirageia-linux-x86_64.tar.gz

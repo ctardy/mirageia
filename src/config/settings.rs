@@ -30,7 +30,7 @@ struct FileConfig {
     detection: DetectionFileConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ProxyFileConfig {
     listen_addr: Option<String>,
@@ -42,34 +42,11 @@ struct ProxyFileConfig {
     passthrough: Option<bool>,
 }
 
-impl Default for ProxyFileConfig {
-    fn default() -> Self {
-        Self {
-            listen_addr: None,
-            anthropic_base_url: None,
-            openai_base_url: None,
-            log_level: None,
-            add_header: None,
-            fail_open: None,
-            passthrough: None,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct DetectionFileConfig {
     whitelist: Vec<String>,
     confidence_threshold: Option<f32>,
-}
-
-impl Default for DetectionFileConfig {
-    fn default() -> Self {
-        Self {
-            whitelist: Vec::new(),
-            confidence_threshold: None,
-        }
-    }
 }
 
 impl Default for AppConfig {

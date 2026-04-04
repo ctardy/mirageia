@@ -128,6 +128,7 @@ pub fn extract_entities(
 }
 
 /// Ajoute l'entité accumulée si elle dépasse le seuil de confiance.
+#[allow(clippy::too_many_arguments)]
 fn flush_entity(
     entities: &mut Vec<PiiEntity>,
     current_type: &Option<PiiType>,

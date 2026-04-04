@@ -10,6 +10,12 @@ pub struct RegexDetector {
     patterns: Vec<(PiiType, Regex)>,
 }
 
+impl Default for RegexDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegexDetector {
     pub fn new() -> Self {
         let patterns = vec![
