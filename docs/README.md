@@ -47,6 +47,7 @@ docs/
 - **[Déploiement ops (Docker + Apache)](fr/deploiement-ops.md)** — Docker, reverse proxy Apache, dashboard web, monitoring, sécurité
 - **[Distribution & installeur](fr/distribution.md)** — Binaires précompilés, script d'install, installeur Tauri, CI/CD, mise à jour
 - **[Contribution](fr/contribution.md)** — Workflow dev, comment ajouter un type PII, modifier le pipeline, process de release
+- **[Dev Linux](fr/dev-linux.md)** — Setup complet d'un poste de dev Linux/WSL : Rust, build, tests, clippy, workflow
 
 ### Architecture
 - [Vue d'ensemble](fr/architecture/vue-ensemble.md) — Schéma global, composants, flux de données
@@ -69,6 +70,7 @@ docs/
 - **[Ops Deployment (Docker + Apache)](en/deployment-ops.md)** — Docker, Apache reverse proxy, web dashboard, monitoring, security
 - **[Distribution & Installer](en/distribution.md)** — Precompiled binaries, install script, Tauri installer, CI/CD, updates
 - **[Contributing](en/contributing.md)** — Dev workflow, adding PII types, modifying the pipeline, release process
+- **[Dev Linux](en/dev-linux.md)** — Full Linux/WSL dev setup: Rust, build, tests, clippy, workflow
 
 ### Architecture
 - [Overview](en/architecture/overview.md) — System diagram, components, data flow
