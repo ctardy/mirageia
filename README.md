@@ -298,18 +298,17 @@ cargo test -- pseudonymization
 
 | Sujet | Lien |
 |-------|------|
-| **Installation** | [`docs/officiel/installation.md`](docs/officiel/installation.md) |
-| **Déploiement ops (Docker + Apache)** | [`docs/officiel/deploiement-ops.md`](docs/officiel/deploiement-ops.md) |
-| **Distribution & installeur** | [`docs/officiel/distribution.md`](docs/officiel/distribution.md) |
-| **Guide de contribution** | [`docs/officiel/contribution.md`](docs/officiel/contribution.md) |
-| Architecture globale | [`docs/officiel/architecture/vue-ensemble.md`](docs/officiel/architecture/vue-ensemble.md) |
-| Architecture détaillée | [`docs/officiel/architecture/architecture-detaillee.md`](docs/officiel/architecture/architecture-detaillee.md) |
-| Flux de pseudonymisation | [`docs/officiel/architecture/flux-pseudonymisation.md`](docs/officiel/architecture/flux-pseudonymisation.md) |
-| Modèle PII embarqué | [`docs/officiel/technique/modele-pii.md`](docs/officiel/technique/modele-pii.md) |
-| Proxy HTTP | [`docs/officiel/technique/proxy-http.md`](docs/officiel/technique/proxy-http.md) |
-| Analyse sécurité RSSI | [`docs/officiel/securite/analyse-rssi.md`](docs/officiel/securite/analyse-rssi.md) |
-| État de l'art / concurrents | [`docs/recherche/etat-de-lart.md`](docs/recherche/etat-de-lart.md) |
-| Tickets | [`docs/tickets/`](docs/tickets/) |
+| | FR | EN |
+|---|---|---|
+| **Installation** | [`docs/fr/installation.md`](docs/fr/installation.md) | [`docs/en/installation.md`](docs/en/installation.md) |
+| **Déploiement ops** | [`docs/fr/deploiement-ops.md`](docs/fr/deploiement-ops.md) | [`docs/en/deployment-ops.md`](docs/en/deployment-ops.md) |
+| **Distribution** | [`docs/fr/distribution.md`](docs/fr/distribution.md) | [`docs/en/distribution.md`](docs/en/distribution.md) |
+| **Contribution** | [`docs/fr/contribution.md`](docs/fr/contribution.md) | [`docs/en/contributing.md`](docs/en/contributing.md) |
+| Architecture | [`docs/fr/architecture/`](docs/fr/architecture/) | [`docs/en/architecture/`](docs/en/architecture/) |
+| Sécurité / Security | [`docs/fr/securite/`](docs/fr/securite/) | [`docs/en/security/`](docs/en/security/) |
+| Technique / Technical | [`docs/fr/technique/`](docs/fr/technique/) | [`docs/en/technical/`](docs/en/technical/) |
+| Recherche | [`docs/recherche/`](docs/recherche/) | |
+| Tickets | [`docs/tickets/`](docs/tickets/) | |
 
 ## Licence
 

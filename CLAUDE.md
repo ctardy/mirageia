@@ -94,12 +94,13 @@ cd /c/dev/projects/mirageia
 
 ## Documentation
 
-| Sujet | Documentation |
-|-------|---------------|
-| Architecture globale | `docs/officiel/architecture/vue-ensemble.md` |
-| Flux de pseudonymisation | `docs/officiel/architecture/flux-pseudonymisation.md` |
-| Modèle PII embarqué | `docs/officiel/technique/modele-pii.md` |
-| Proxy HTTP | `docs/officiel/technique/proxy-http.md` |
-| Recherche et état de l'art | `docs/recherche/etat-de-lart.md` |
-| Tickets | `docs/tickets/` |
+| Sujet | FR | EN |
+|-------|----|----|
+| Architecture globale | `docs/fr/architecture/vue-ensemble.md` | `docs/en/architecture/overview.md` |
+| Flux de pseudonymisation | `docs/fr/architecture/flux-pseudonymisation.md` | `docs/en/architecture/pseudonymization-flow.md` |
+| Modèle PII embarqué | `docs/fr/technique/modele-pii.md` | `docs/en/technical/pii-model.md` |
+| Proxy HTTP | `docs/fr/technique/proxy-http.md` | `docs/en/technical/http-proxy.md` |
+| Déploiement ops | `docs/fr/deploiement-ops.md` | `docs/en/deployment-ops.md` |
+| Recherche et état de l'art | `docs/recherche/etat-de-lart.md` | |
+| Tickets | `docs/tickets/` | |
 | Index complet | `docs/README.md` |
