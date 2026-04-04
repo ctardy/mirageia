@@ -160,7 +160,7 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
 
     // Trier par longueur décroissante pour éviter les remplacements partiels
     let mut sorted_originals = originals_to_protect;
-    sorted_originals.sort_by(|a, b| b.len().cmp(&a.len()));
+    sorted_originals.sort_by_key(|b| std::cmp::Reverse(b.len()));
     sorted_originals.dedup();
 
     for (i, original) in sorted_originals.iter().enumerate() {
