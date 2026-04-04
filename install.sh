@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Script d'installation MirageIA
-# Usage : curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+# Usage : curl -sSf https://raw.githubusercontent.com/ctardy/mirageia/main/install.sh | sh
 
 set -euo pipefail
 
-REPO="<org>/mirageia"
+REPO="ctardy/mirageia"
 INSTALL_DIR="${MIRAGEIA_INSTALL_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="$HOME/.mirageia"
 
@@ -100,7 +100,7 @@ setup() {
         info "Configuration par défaut créée dans ${CONFIG_DIR}/config.toml"
         cat > "${CONFIG_DIR}/config.toml" << 'TOML'
 # Configuration MirageIA
-# Voir https://github.com/<org>/mirageia pour la documentation
+# Voir https://github.com/ctardy/mirageia pour la documentation
 
 [proxy]
 # listen_addr = "127.0.0.1:3100"

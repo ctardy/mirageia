@@ -38,7 +38,7 @@ README.md            Quick start instructions
 
 ```powershell
 # Download
-Invoke-WebRequest -Uri "https://github.com/<org>/mirageia/releases/latest/download/mirageia-windows-x86_64.zip" -OutFile mirageia.zip
+Invoke-WebRequest -Uri "https://github.com/ctardy/mirageia/releases/latest/download/mirageia-windows-x86_64.zip" -OutFile mirageia.zip
 
 # Extract
 Expand-Archive mirageia.zip -DestinationPath "$env:LOCALAPPDATA\MirageIA"
@@ -51,7 +51,7 @@ $env:PATH += ";$env:LOCALAPPDATA\MirageIA"
 
 ```bash
 # Download and install
-curl -sSfL https://github.com/<org>/mirageia/releases/latest/download/mirageia-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz | tar xz -C /usr/local/bin/
+curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz | tar xz -C /usr/local/bin/
 ```
 
 ### Automatic installation script
@@ -59,7 +59,7 @@ curl -sSfL https://github.com/<org>/mirageia/releases/latest/download/mirageia-$
 An `install.sh` script detects the OS and architecture, then downloads the correct binary:
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+curl -sSf https://raw.githubusercontent.com/ctardy/mirageia/main/install.sh | sh
 ```
 
 The script:
@@ -260,7 +260,7 @@ mirageia update
 ### Install script (first install or force latest version)
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/<org>/mirageia/main/install.sh | sh
+curl -sSf https://raw.githubusercontent.com/ctardy/mirageia/main/install.sh | sh
 ```
 
 ### cargo install
