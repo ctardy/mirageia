@@ -35,8 +35,8 @@ Le proxy détermine le provider cible à partir du path :
 ### Endpoints internes MirageIA
 | Endpoint | Méthode | Description |
 |----------|---------|-------------|
-| `/health` | GET | État du proxy : `{"status":"ok","passthrough":false,"pii_mappings":0}` |
-| `/events` | GET | Flux SSE temps réel des requêtes (pour `mirageia console`) |
+| `/health` | GET | État du proxy : `{"status":"ok","version":"0.3.0","passthrough":false,"pii_mappings":0}` |
+| `/events` | GET | Flux SSE temps réel des requêtes enrichies (pour `mirageia console`) |
 
 ## Mode passthrough
 
@@ -112,14 +112,34 @@ mirageia wrap --port 4200 -- claude
 
 ### `mirageia console`
 
-Se connecte au endpoint `/events` SSE du proxy et affiche les événements formatés :
+Se connecte au endpoint `/events` SSE du proxy et affiche les événements formatés avec des informations enrichies :
 
 ```
-  [14:32:01] → PII  Anthropic  /v1/messages (3 PII détectées)
-  [14:32:02] ← PII  Anthropic  /v1/messages
-  [14:35:10] → PASS OpenAI     /v1/chat/completions
-  [14:35:11] ← PASS OpenAI     /v1/chat/completions
+  [14:32:01] → PII  Anthropic  /v1/messages  claude-sonnet-4-20250514  1.2 KB
+           ├── 3 PII : EMAIL:1, IP_ADDRESS:1, PHONE_NUMBER:1
+  [14:32:02] ← 200  Anthropic  /v1/messages  345ms  streaming
+  [14:35:10] → PASS OpenAI     /v1/chat/completions  gpt-4  0.8 KB
+  [14:35:11] ← 200  OpenAI     /v1/chat/completions  120ms
 ```
+
+#### Champs des événements SSE (`/events`)
+
+Chaque événement contient les champs suivants :
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `timestamp` | string | Horodatage RFC 3339 |
+| `provider` | string | Fournisseur LLM (Anthropic, OpenAI) |
+| `path` | string | Chemin de la requête |
+| `direction` | string | `→` (requête) ou `←` (réponse) |
+| `pii_count` | number | Nombre de PII détectées |
+| `passthrough` | bool | Mode passthrough actif |
+| `body_size` | number | Taille du body en octets (requête uniquement) |
+| `model` | string? | Modèle LLM utilisé (requête uniquement) |
+| `pii_types` | string[] | Types de PII détectées avec comptage (ex: `EMAIL:2`) |
+| `status_code` | number? | Code HTTP de la réponse upstream (réponse uniquement) |
+| `duration_ms` | number? | Latence en millisecondes (réponse uniquement) |
+| `streaming` | bool? | Si la réponse est en mode SSE streaming (réponse uniquement) |
 
 ## Stack technique
 

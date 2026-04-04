@@ -47,6 +47,12 @@ pub struct ProxyEvent {
     pub direction: Direction,
     pub pii_count: usize,
     pub passthrough: bool,
+    pub body_size: usize,
+    pub model: Option<String>,
+    pub pii_types: Vec<String>,
+    pub status_code: Option<u16>,
+    pub duration_ms: Option<u64>,
+    pub streaming: Option<bool>,
 }
 
 impl std::fmt::Display for ProxyEvent {
@@ -64,6 +70,13 @@ impl std::fmt::Display for ProxyEvent {
             time, self.direction, mode, self.provider, self.path, pii
         )
     }
+}
+
+/// Extrait le nom du modèle depuis le body JSON d'une requête LLM.
+fn extract_model_from_body(body_bytes: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body_bytes)
+        .ok()
+        .and_then(|v| v.get("model")?.as_str().map(String::from))
 }
 
 pub struct ProxyState {
@@ -157,6 +170,12 @@ async fn proxy_handler(
                             "direction": format!("{}", event.direction),
                             "pii_count": event.pii_count,
                             "passthrough": event.passthrough,
+                            "body_size": event.body_size,
+                            "model": event.model,
+                            "pii_types": event.pii_types,
+                            "status_code": event.status_code,
+                            "duration_ms": event.duration_ms,
+                            "streaming": event.streaming,
                         });
                         yield Ok::<_, std::io::Error>(
                             format!("data: {}\n\n", data)
@@ -207,6 +226,9 @@ async fn proxy_handler(
         .await
         .map_err(|e| ProxyError::Body(e.to_string()))?;
 
+    let model = extract_model_from_body(&body_bytes);
+    let request_body_size = body_bytes.len();
+
     // --- MODE PASSTHROUGH : relayer sans pseudonymiser ---
     if state.config.passthrough {
         tracing::debug!(
@@ -215,7 +237,6 @@ async fn proxy_handler(
             "Mode passthrough — requête relayée sans pseudonymisation"
         );
 
-        // Émettre un événement console
         let _ = state.events_tx.send(ProxyEvent {
             timestamp: chrono::Local::now(),
             provider: format!("{:?}", provider),
@@ -223,12 +244,27 @@ async fn proxy_handler(
             direction: Direction::Request,
             pii_count: 0,
             passthrough: true,
+            body_size: request_body_size,
+            model: model.clone(),
+            pii_types: Vec::new(),
+            status_code: None,
+            duration_ms: None,
+            streaming: None,
         });
 
+        let start = std::time::Instant::now();
         let upstream_response = state
             .client
             .forward(method, &upstream_url, upstream_headers, Bytes::from(body_bytes.to_vec()))
             .await?;
+        let duration = start.elapsed().as_millis() as u64;
+
+        let status_code = upstream_response.status().as_u16();
+        let is_sse = upstream_response.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.contains("text/event-stream"))
+            .unwrap_or(false);
 
         let _ = state.events_tx.send(ProxyEvent {
             timestamp: chrono::Local::now(),
@@ -237,30 +273,44 @@ async fn proxy_handler(
             direction: Direction::Response,
             pii_count: 0,
             passthrough: true,
+            body_size: 0,
+            model: None,
+            pii_types: Vec::new(),
+            status_code: Some(status_code),
+            duration_ms: Some(duration),
+            streaming: Some(is_sse),
         });
 
         return build_passthrough_response(upstream_response).await;
     }
 
     // --- PSEUDONYMISATION DE LA REQUÊTE (fail-open) ---
-    let (final_body, was_pseudonymized, pii_count) =
-        match pseudonymize_request(&body_bytes, provider, &state) {
-            Ok((new_body, true, count)) => {
+    let pseudo_result = match pseudonymize_request(&body_bytes, provider, &state) {
+        Ok(result) => {
+            if result.was_pseudonymized {
                 tracing::info!(
                     provider = ?provider,
                     mappings = state.mapping.len(),
                     "Requête pseudonymisée"
                 );
-                (new_body, true, count)
             }
-            Ok((body, false, _)) => (body, false, 0),
-            Err(e) => {
-                tracing::warn!("Pseudonymisation échouée, passthrough : {}", e);
-                (body_bytes.to_vec(), false, 0)
+            result
+        }
+        Err(e) => {
+            tracing::warn!("Pseudonymisation échouée, passthrough : {}", e);
+            PseudonymizeResult {
+                body: body_bytes.to_vec(),
+                was_pseudonymized: false,
+                pii_count: 0,
+                pii_types: Vec::new(),
             }
-        };
+        }
+    };
 
-    // Émettre un événement console (requête)
+    let final_body = pseudo_result.body;
+    let was_pseudonymized = pseudo_result.was_pseudonymized;
+    let pii_count = pseudo_result.pii_count;
+
     let _ = state.events_tx.send(ProxyEvent {
         timestamp: chrono::Local::now(),
         provider: format!("{:?}", provider),
@@ -268,6 +318,12 @@ async fn proxy_handler(
         direction: Direction::Request,
         pii_count,
         passthrough: false,
+        body_size: request_body_size,
+        model: model.clone(),
+        pii_types: pseudo_result.pii_types,
+        status_code: None,
+        duration_ms: None,
+        streaming: None,
     });
 
     tracing::debug!(
@@ -279,12 +335,20 @@ async fn proxy_handler(
     );
 
     // Envoyer à l'upstream
+    let start = std::time::Instant::now();
     let upstream_response = state
         .client
         .forward(method, &upstream_url, upstream_headers, Bytes::from(final_body))
         .await?;
+    let duration = start.elapsed().as_millis() as u64;
 
-    // Émettre un événement console (réponse)
+    let status_code = upstream_response.status().as_u16();
+    let is_sse = upstream_response.headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("text/event-stream"))
+        .unwrap_or(false);
+
     let _ = state.events_tx.send(ProxyEvent {
         timestamp: chrono::Local::now(),
         provider: format!("{:?}", provider),
@@ -292,6 +356,12 @@ async fn proxy_handler(
         direction: Direction::Response,
         pii_count: 0,
         passthrough: false,
+        body_size: 0,
+        model: None,
+        pii_types: Vec::new(),
+        status_code: Some(status_code),
+        duration_ms: Some(duration),
+        streaming: Some(is_sse),
     });
 
     // --- DÉ-PSEUDONYMISATION DE LA RÉPONSE ---
@@ -302,24 +372,37 @@ async fn proxy_handler(
     }
 }
 
+/// Résultat de la pseudonymisation d'une requête.
+struct PseudonymizeResult {
+    body: Vec<u8>,
+    was_pseudonymized: bool,
+    pii_count: usize,
+    pii_types: Vec<String>,
+}
+
 /// Pseudonymise le body de la requête.
-/// Retourne (nouveau body, true si des PII ont été remplacées, nombre de PII).
 fn pseudonymize_request(
     body_bytes: &[u8],
     provider: router::Provider,
     state: &ProxyState,
-) -> Result<(Vec<u8>, bool, usize), String> {
+) -> Result<PseudonymizeResult, String> {
     let body: serde_json::Value =
         serde_json::from_slice(body_bytes).map_err(|e| format!("JSON invalide : {}", e))?;
 
     let text_fields = extract_text_fields(&body, provider);
 
     if text_fields.is_empty() {
-        return Ok((body_bytes.to_vec(), false, 0));
+        return Ok(PseudonymizeResult {
+            body: body_bytes.to_vec(),
+            was_pseudonymized: false,
+            pii_count: 0,
+            pii_types: Vec::new(),
+        });
     }
 
     let mut replacements: Vec<(JsonPath, String)> = Vec::new();
     let mut total_pii = 0;
+    let mut pii_type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     let generator = state.generator.lock().unwrap();
 
@@ -328,6 +411,9 @@ fn pseudonymize_request(
 
         if !entities.is_empty() {
             total_pii += entities.len();
+            for entity in &entities {
+                *pii_type_counts.entry(entity.entity_type.to_string()).or_insert(0) += 1;
+            }
             let (pseudonymized_text, _records) =
                 pseudonymize_text(&field.text, &entities, &state.mapping, &generator);
             replacements.push((field.path.clone(), pseudonymized_text));
@@ -337,15 +423,30 @@ fn pseudonymize_request(
     drop(generator);
 
     if replacements.is_empty() {
-        return Ok((body_bytes.to_vec(), false, 0));
+        return Ok(PseudonymizeResult {
+            body: body_bytes.to_vec(),
+            was_pseudonymized: false,
+            pii_count: 0,
+            pii_types: Vec::new(),
+        });
     }
 
     tracing::info!(pii_count = total_pii, "PII détectées dans la requête");
 
+    let pii_types: Vec<String> = pii_type_counts
+        .into_iter()
+        .map(|(t, c)| format!("{}:{}", t, c))
+        .collect();
+
     let new_body = rebuild_body(&body, &replacements);
     let new_body_bytes = serde_json::to_vec(&new_body).map_err(|e| e.to_string())?;
 
-    Ok((new_body_bytes, true, total_pii))
+    Ok(PseudonymizeResult {
+        body: new_body_bytes,
+        was_pseudonymized: true,
+        pii_count: total_pii,
+        pii_types,
+    })
 }
 
 /// Construit une réponse avec dé-pseudonymisation.
@@ -757,17 +858,34 @@ function addEvent(evt) {
   const piiHtml = evt.pii_count > 0
     ? `<span class="pii-badge">${evt.pii_count} PII</span>`
     : '';
+  const modelHtml = evt.model ? `<span style="color:var(--accent);font-size:0.85em">${evt.model}</span>` : '';
+  const sizeHtml = isReq && evt.body_size > 0
+    ? `<span style="color:var(--muted);font-size:0.85em">${evt.body_size > 1024 ? (evt.body_size/1024).toFixed(1)+'KB' : evt.body_size+'B'}</span>`
+    : '';
+  const statusHtml = !isReq && evt.status_code
+    ? `<span style="color:${evt.status_code < 400 ? 'var(--green)' : evt.status_code < 500 ? 'var(--yellow)' : 'var(--red)'}">${evt.status_code}</span>`
+    : '';
+  const durationHtml = !isReq && evt.duration_ms != null
+    ? `<span style="color:var(--muted);font-size:0.85em">${evt.duration_ms}ms</span>`
+    : '';
+  const streamHtml = !isReq && evt.streaming ? `<span style="color:var(--cyan);font-size:0.85em">streaming</span>` : '';
+  const piiTypesHtml = isReq && evt.pii_types && evt.pii_types.length > 0
+    ? `<div style="color:var(--yellow);font-size:0.8em;padding-left:2em">\u251c\u2500\u2500 ${evt.pii_types.join(', ')}</div>`
+    : '';
 
   const row = document.createElement('div');
   row.className = 'event-row';
   row.innerHTML = `
     <span>${time}</span>
     <span class="${dirClass}">${evt.direction}</span>
-    <span class="${modeClass}">${modeText}</span>
+    <span class="${modeClass}">${isReq ? modeText : ''}</span>
+    <span>${isReq ? '' : statusHtml}</span>
     <span>${evt.provider}</span>
     <span>${evt.path}</span>
-    <span>${piiHtml}</span>
-  `;
+    <span>${modelHtml}</span>
+    <span>${sizeHtml}${durationHtml}</span>
+    <span>${piiHtml}${streamHtml}</span>
+  ` + piiTypesHtml;
 
   container.insertBefore(row, container.firstChild);
 

@@ -236,6 +236,16 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn format_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
 fn print_event(event: &serde_json::Value) {
     let timestamp = event["timestamp"]
         .as_str()
@@ -248,25 +258,85 @@ fn print_event(event: &serde_json::Value) {
     let path = event["path"].as_str().unwrap_or("/");
     let pii_count = event["pii_count"].as_u64().unwrap_or(0);
     let passthrough = event["passthrough"].as_bool().unwrap_or(false);
+    let body_size = event["body_size"].as_u64().unwrap_or(0);
+    let model = event["model"].as_str();
+    let status_code = event["status_code"].as_u64();
+    let duration_ms = event["duration_ms"].as_u64();
+    let streaming = event["streaming"].as_bool();
+    let pii_types = event["pii_types"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
-    let mode = if passthrough { "PASS" } else { "PII " };
+    let is_request = direction == "→";
 
-    let pii_info = if pii_count > 0 {
-        format!(" \x1b[33m({} PII détectées)\x1b[0m", pii_count)
-    } else {
-        String::new()
-    };
-
-    let dir_colored = if direction == "→" {
+    let dir_colored = if is_request {
         format!("\x1b[36m{}\x1b[0m", direction) // cyan pour requête
     } else {
         format!("\x1b[32m{}\x1b[0m", direction) // vert pour réponse
     };
 
-    eprintln!(
-        "  [{}] {} {} {:<10} {}{}",
-        timestamp, dir_colored, mode, provider, path, pii_info
-    );
+    let mode = if passthrough {
+        "\x1b[90mPASS\x1b[0m"
+    } else {
+        "\x1b[35mPII \x1b[0m"
+    };
+
+    if is_request {
+        // Ligne requête : direction, mode, provider, path, modèle, taille
+        let model_str = model
+            .map(|m| format!("  \x1b[94m{}\x1b[0m", m))
+            .unwrap_or_default();
+        let size_str = if body_size > 0 {
+            format!("  \x1b[90m{}\x1b[0m", format_size(body_size))
+        } else {
+            String::new()
+        };
+
+        eprintln!(
+            "  \x1b[90m[{}]\x1b[0m {} {} {:<10} {}{}{}",
+            timestamp, dir_colored, mode, provider, path, model_str, size_str
+        );
+
+        // Sous-ligne PII si détectées
+        if pii_count > 0 && !pii_types.is_empty() {
+            let types_str = pii_types.join(", ");
+            eprintln!(
+                "           \x1b[33m├── {} PII : {}\x1b[0m",
+                pii_count, types_str
+            );
+        } else if pii_count > 0 {
+            eprintln!(
+                "           \x1b[33m├── {} PII détectées\x1b[0m",
+                pii_count
+            );
+        }
+    } else {
+        // Ligne réponse : direction, status, provider, path, latence, streaming
+        let status_str = match status_code {
+            Some(code) if code >= 200 && code < 300 => format!("\x1b[32m{}\x1b[0m", code),
+            Some(code) if code >= 400 && code < 500 => format!("\x1b[33m{}\x1b[0m", code),
+            Some(code) if code >= 500 => format!("\x1b[31m{}\x1b[0m", code),
+            Some(code) => format!("{}", code),
+            None => "???".to_string(),
+        };
+        let duration_str = duration_ms
+            .map(|ms| format!("  \x1b[90m{}ms\x1b[0m", ms))
+            .unwrap_or_default();
+        let stream_str = match streaming {
+            Some(true) => "  \x1b[96mstreaming\x1b[0m",
+            _ => "",
+        };
+
+        eprintln!(
+            "  \x1b[90m[{}]\x1b[0m {} {} {:<10} {}{}{}",
+            timestamp, dir_colored, status_str, provider, path, duration_str, stream_str
+        );
+    }
 }
 
 #[cfg(feature = "onnx")]

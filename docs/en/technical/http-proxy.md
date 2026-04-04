@@ -35,8 +35,8 @@ The proxy determines the target provider from the path:
 ### MirageIA internal endpoints
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Proxy status: `{"status":"ok","passthrough":false,"pii_mappings":0}` |
-| `/events` | GET | Real-time SSE stream of requests (for `mirageia console`) |
+| `/health` | GET | Proxy status: `{"status":"ok","version":"0.3.0","passthrough":false,"pii_mappings":0}` |
+| `/events` | GET | Real-time enriched SSE stream of requests (for `mirageia console`) |
 
 ## Passthrough mode
 
@@ -112,14 +112,34 @@ mirageia wrap --port 4200 -- claude
 
 ### `mirageia console`
 
-Connects to the proxy's `/events` SSE endpoint and displays formatted events:
+Connects to the proxy's `/events` SSE endpoint and displays enriched formatted events:
 
 ```
-  [14:32:01] → PII  Anthropic  /v1/messages (3 PII detected)
-  [14:32:02] ← PII  Anthropic  /v1/messages
-  [14:35:10] → PASS OpenAI     /v1/chat/completions
-  [14:35:11] ← PASS OpenAI     /v1/chat/completions
+  [14:32:01] → PII  Anthropic  /v1/messages  claude-sonnet-4-20250514  1.2 KB
+           ├── 3 PII: EMAIL:1, IP_ADDRESS:1, PHONE_NUMBER:1
+  [14:32:02] ← 200  Anthropic  /v1/messages  345ms  streaming
+  [14:35:10] → PASS OpenAI     /v1/chat/completions  gpt-4  0.8 KB
+  [14:35:11] ← 200  OpenAI     /v1/chat/completions  120ms
 ```
+
+#### SSE event fields (`/events`)
+
+Each event contains the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | string | RFC 3339 timestamp |
+| `provider` | string | LLM provider (Anthropic, OpenAI) |
+| `path` | string | Request path |
+| `direction` | string | `→` (request) or `←` (response) |
+| `pii_count` | number | Number of PII entities detected |
+| `passthrough` | bool | Passthrough mode active |
+| `body_size` | number | Request body size in bytes (request only) |
+| `model` | string? | LLM model used (request only) |
+| `pii_types` | string[] | PII types detected with counts (e.g. `EMAIL:2`) |
+| `status_code` | number? | Upstream HTTP response code (response only) |
+| `duration_ms` | number? | Latency in milliseconds (response only) |
+| `streaming` | bool? | Whether response is SSE streaming (response only) |
 
 ## Technical stack
 

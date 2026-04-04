@@ -490,3 +490,141 @@ async fn test_dashboard_returns_html() {
     assert!(body.contains("MirageIA"), "Le dashboard doit contenir le titre");
     assert!(body.contains("EventSource"), "Le dashboard doit se connecter au SSE");
 }
+
+// ─── Tests événements enrichis ───────────────────────────────
+
+#[tokio::test]
+async fn test_events_contain_enriched_fields() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+
+    let mut config = mirageia::config::AppConfig::default();
+    config.listen_addr = "127.0.0.1:0".to_string();
+    config.anthropic_base_url = format!("http://{}", upstream_addr);
+
+    let state = Arc::new(mirageia::proxy::create_state(config));
+    let mut events_rx = state.events_tx.subscribe();
+    let app = mirageia::proxy::create_router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 100,
+        "messages": [{
+            "role": "user",
+            "content": "Contactez alice@corp.com et 192.168.1.50"
+        }]
+    });
+
+    client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    // Événement requête
+    let req_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout événement requête")
+    .expect("Erreur réception");
+
+    assert_eq!(req_event.model.as_deref(), Some("claude-sonnet-4-20250514"));
+    assert!(req_event.body_size > 0, "body_size doit être > 0");
+    assert!(req_event.pii_count >= 2, "Au moins 2 PII (email + IP)");
+    assert!(!req_event.pii_types.is_empty(), "pii_types ne doit pas être vide");
+    assert!(req_event.status_code.is_none(), "Pas de status_code sur la requête");
+
+    // Événement réponse
+    let resp_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout événement réponse")
+    .expect("Erreur réception");
+
+    assert!(resp_event.status_code.is_some(), "status_code doit être présent sur la réponse");
+    assert_eq!(resp_event.status_code.unwrap(), 200);
+    assert!(resp_event.duration_ms.is_some(), "duration_ms doit être présent");
+    assert!(resp_event.streaming.is_some(), "streaming doit être présent");
+}
+
+#[tokio::test]
+async fn test_events_passthrough_contain_enriched_fields() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+
+    let mut config = mirageia::config::AppConfig::default();
+    config.listen_addr = "127.0.0.1:0".to_string();
+    config.anthropic_base_url = format!("http://{}", upstream_addr);
+    config.passthrough = true;
+
+    let state = Arc::new(mirageia::proxy::create_state(config));
+    let mut events_rx = state.events_tx.subscribe();
+    let app = mirageia::proxy::create_router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 100,
+        "messages": [{
+            "role": "user",
+            "content": "Bonjour"
+        }]
+    });
+
+    client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    // Événement requête passthrough
+    let req_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout")
+    .expect("Erreur");
+
+    assert!(req_event.passthrough);
+    assert_eq!(req_event.model.as_deref(), Some("claude-sonnet-4-20250514"));
+    assert!(req_event.body_size > 0);
+
+    // Événement réponse passthrough
+    let resp_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("Timeout")
+    .expect("Erreur");
+
+    assert!(resp_event.passthrough);
+    assert_eq!(resp_event.status_code.unwrap(), 200);
+    assert!(resp_event.duration_ms.is_some());
+}
