@@ -136,6 +136,7 @@ async fn proxy_handler(
     if path == "/health" {
         let stats = serde_json::json!({
             "status": "ok",
+            "version": env!("CARGO_PKG_VERSION"),
             "passthrough": state.config.passthrough,
             "pii_mappings": state.mapping.len(),
         });

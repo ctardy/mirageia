@@ -189,10 +189,12 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
                 "PSEUDONYMISATION"
             };
             let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
+            let version = health["version"].as_str().unwrap_or("?");
             eprintln!("  ╔══════════════════════════════════════════╗");
             eprintln!("  ║  MirageIA Console                       ║");
             eprintln!("  ╚══════════════════════════════════════════╝");
             eprintln!();
+            eprintln!("  Version    : {}", version);
             eprintln!("  Proxy      : {}", addr);
             eprintln!("  Mode       : {}", mode);
             eprintln!("  Mappings   : {}", mappings);
