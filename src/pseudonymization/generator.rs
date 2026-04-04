@@ -48,14 +48,24 @@ impl PseudonymGenerator {
         }
     }
 
-    fn gen_firstname(&self, rng: &mut impl Rng, _original: &str) -> String {
-        let idx = rng.gen_range(0..self.dictionaries.firstnames.len());
-        self.dictionaries.firstnames[idx].clone()
+    fn gen_firstname(&self, rng: &mut impl Rng, original: &str) -> String {
+        let dict = &self.dictionaries.firstnames;
+        loop {
+            let candidate = dict[rng.gen_range(0..dict.len())].clone();
+            if !candidate.eq_ignore_ascii_case(original) {
+                return candidate;
+            }
+        }
     }
 
-    fn gen_lastname(&self, rng: &mut impl Rng, _original: &str) -> String {
-        let idx = rng.gen_range(0..self.dictionaries.lastnames.len());
-        self.dictionaries.lastnames[idx].clone()
+    fn gen_lastname(&self, rng: &mut impl Rng, original: &str) -> String {
+        let dict = &self.dictionaries.lastnames;
+        loop {
+            let candidate = dict[rng.gen_range(0..dict.len())].clone();
+            if !candidate.eq_ignore_ascii_case(original) {
+                return candidate;
+            }
+        }
     }
 
     fn gen_email(&self, rng: &mut impl Rng, _original: &str) -> String {
