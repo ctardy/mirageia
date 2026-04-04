@@ -23,7 +23,52 @@ impl Default for RegexDetector {
 impl RegexDetector {
     pub fn new() -> Self {
         // Patterns simples (regex suffit)
+        // ORDRE IMPORTANT : les patterns spécifiques (API keys) en premier,
+        // les patterns génériques (téléphone, etc.) en dernier.
+        // Ainsi, si une clé API contient des chiffres, le téléphone ne surpasse pas la clé.
         let patterns = vec![
+            // ─── Clés API / tokens — patterns gitleaks (MIT) ─────────────────
+            // Anthropic API keys (sk-ant-) — spécifique, en premier
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bsk-ant-[a-zA-Z0-9\-_]{40,}\b").unwrap(),
+            ),
+            // OpenAI API keys (sk-proj-, sk-)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bsk-(?:proj-)?[a-zA-Z0-9]{48,}\b").unwrap(),
+            ),
+            // Stripe keys (sk_live_, pk_live_, sk_test_, pk_test_)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:sk|pk)_(?:live|test)_[a-zA-Z0-9]{24,}\b").unwrap(),
+            ),
+            // GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bgh[pousr]_[a-zA-Z0-9]{36,}\b").unwrap(),
+            ),
+            // Slack tokens (xoxb-, xoxp-, xoxa-, xoxs-)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\bxox[bpas]-[0-9A-Z]{10,}-[0-9A-Z]{10,}(?:-[0-9a-zA-Z]{24,})?\b").unwrap(),
+            ),
+            // AWS Access Key ID
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b").unwrap(),
+            ),
+            // JWT tokens
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b").unwrap(),
+            ),
+            // Clés génériques (sk-, pk-, api-, token-, bearer)
+            (
+                PiiType::ApiKey,
+                Regex::new(r"\b(?:sk|pk|api|token|bearer)[-_][a-zA-Z0-9_\-\.]{16,}\b").unwrap(),
+            ),
+            // ─── Patterns génériques (en dernier, ignorés si chevauchement) ──
             // Emails
             (
                 PiiType::Email,
@@ -48,47 +93,6 @@ impl RegexDetector {
             (
                 PiiType::NationalId,
                 Regex::new(r"\b[12]\s?\d{2}\s?\d{2}\s?\d{2}\s?\d{3}\s?\d{3}\s?\d{2}\b").unwrap(),
-            ),
-            // ─── Clés API / tokens — patterns gitleaks (MIT) ─────────────────
-            // Clés génériques (sk-, pk-, api-, token-, bearer)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\b(?:sk|pk|api|token|bearer)[-_][a-zA-Z0-9_\-\.]{16,}\b").unwrap(),
-            ),
-            // GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\bgh[pousr]_[a-zA-Z0-9]{36,}\b").unwrap(),
-            ),
-            // Slack tokens (xoxb-, xoxp-, xoxa-, xoxs-)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\bxox[bpas]-[0-9A-Z]{10,}-[0-9A-Z]{10,}(?:-[0-9a-zA-Z]{24,})?\b").unwrap(),
-            ),
-            // AWS Access Key ID
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\b(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}\b").unwrap(),
-            ),
-            // Stripe keys (sk_live_, pk_live_, sk_test_, pk_test_)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\b(?:sk|pk)_(?:live|test)_[a-zA-Z0-9]{24,}\b").unwrap(),
-            ),
-            // Anthropic API keys (sk-ant-)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\bsk-ant-[a-zA-Z0-9\-_]{40,}\b").unwrap(),
-            ),
-            // OpenAI API keys (sk-proj-, sk-)
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\bsk-(?:proj-)?[a-zA-Z0-9]{48,}\b").unwrap(),
-            ),
-            // JWT tokens
-            (
-                PiiType::ApiKey,
-                Regex::new(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b").unwrap(),
             ),
         ];
 
@@ -128,20 +132,26 @@ impl RegexDetector {
     pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
         let mut entities = Vec::new();
 
-        // Patterns simples
-        for (pii_type, regex) in &self.patterns {
-            for mat in regex.find_iter(text) {
-                self.push_if_new(&mut entities, mat.as_str(), *pii_type, mat.start(), mat.end(), 0.90);
-            }
-        }
-
-        // Patterns avec validation algorithmique
+        // Patterns validés en premier (confiance 0.95) : IBAN, CB
+        // Ils ont priorité sur les patterns simples en cas de chevauchement
         for (pii_type, regex, validator) in &self.validated_patterns {
             for mat in regex.find_iter(text) {
                 let matched = mat.as_str();
-                // Appliquer le validator : si invalide (ex: checksum Luhn/MOD-97 faux), ignorer
                 if validator(matched) {
                     self.push_if_new(&mut entities, matched, *pii_type, mat.start(), mat.end(), 0.95);
+                }
+            }
+        }
+
+        // Patterns simples (confiance 0.90) : ignorés si la zone chevauche une entité déjà détectée
+        for (pii_type, regex) in &self.patterns {
+            for mat in regex.find_iter(text) {
+                let start = mat.start();
+                let end = mat.end();
+                // Ignorer si chevauchement avec une entité existante (ex: PHONE dans un IBAN)
+                let overlaps = entities.iter().any(|e| start < e.end && end > e.start);
+                if !overlaps {
+                    self.push_if_new(&mut entities, mat.as_str(), *pii_type, start, end, 0.90);
                 }
             }
         }
@@ -240,6 +250,16 @@ mod tests {
         let entities = detector().detect("IBAN: FR7630006000011234567890189");
         let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
         assert_eq!(iban_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_iban_not_detected_as_phone() {
+        // Les chiffres d'un IBAN ne doivent pas être détectés comme numéro de téléphone
+        let entities = detector().detect("IBAN : FR7630006000011234567890189");
+        let phone_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::PhoneNumber).collect();
+        let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
+        assert_eq!(iban_entities.len(), 1, "IBAN doit être détecté");
+        assert_eq!(phone_entities.len(), 0, "IBAN ne doit pas être détecté comme téléphone");
     }
 
     #[test]
