@@ -1,15 +1,15 @@
 # MirageIA
 
-**Proxy de pseudonymisation intelligent pour API LLM avec modèle embarqué.**
+**Proxy de pseudonymisation intelligent pour API LLM.**
 
 L'API ne voit jamais vos vraies données — elle voit un mirage.
 
 ```
-Votre app  ──►  MirageIA (proxy local)  ──►  API LLM (Anthropic / OpenAI)
-                 │                              │
-                 ├─ Détecte les PII (LLM ONNX)  │
-                 ├─ Pseudonymise avant envoi     │
-                 └─ Restaure dans la réponse  ◄──┘
+Votre app  ──►  MirageIA (proxy local :3100)  ──►  API LLM (Anthropic / OpenAI)
+                 │                                    │
+                 ├─ Détecte les PII (regex + ONNX)    │
+                 ├─ Pseudonymise avant envoi           │
+                 └─ Restaure dans la réponse  ◄────────┘
 ```
 
 ## Le problème
@@ -22,100 +22,268 @@ MirageIA s'intercale entre votre application et l'API LLM. Il détecte automatiq
 
 | Donnée originale | Ce que l'API reçoit | Ce que vous recevez |
 |---|---|---|
-| `user.lastName = "Tardy"` | `user.lastName = "Gerard"` | `"Tardy"` (restauré) |
-| `192.168.1.22` | `10.0.42.7` | `192.168.1.22` (restauré) |
-| `chris@mondomaine.fr` | `paul@example.com` | `chris@mondomaine.fr` (restauré) |
+| `jean.dupont@acme.fr` | `alice@example.com` | `jean.dupont@acme.fr` (restauré) |
+| `192.168.1.22` | `10.0.84.12` | `192.168.1.22` (restauré) |
+| `06 12 34 56 78` | `06 47 91 28 53` | `06 12 34 56 78` (restauré) |
+| `sk-abc123def456...` | `sk-xR9mK2pL7wQ4...` | `sk-abc123def456...` (restauré) |
 
 Le LLM travaille avec des données fictives mais cohérentes — sa réponse est tout aussi pertinente, et vos données n'ont jamais quitté votre machine.
 
-## Différenciateurs
+---
 
-| | MirageIA | Concurrents |
+## Démarrage rapide
+
+### Prérequis
+
+- [Rust](https://rustup.rs/) (1.75+)
+- GCC (via MSYS2 sur Windows) ou toolchain MSVC
+
+### Installation
+
+```bash
+git clone <repo-url>
+cd mirageia
+
+# Sur Windows avec MSYS2 :
+export PATH="/c/msys64/mingw64/bin:$HOME/.cargo/bin:$PATH"
+
+cargo build --release
+```
+
+### Configuration guidée
+
+```bash
+# L'assistant vous guide : port, providers LLM, whitelist, shell
+mirageia setup
+```
+
+### Utilisation
+
+```bash
+# Lancer le proxy
+mirageia
+
+# Ou depuis les sources :
+cargo run
+
+# Utilisez Claude Code, votre SDK ou curl normalement.
+# MirageIA intercepte, pseudonymise, et restaure automatiquement.
+```
+
+### Vérification
+
+```bash
+# Health check
+curl http://localhost:3100/health
+
+# Requête test (nécessite une clé API Anthropic)
+curl -X POST http://localhost:3100/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 100,
+    "messages": [{"role": "user", "content": "Mon email est jean@acme.fr et mon IP est 192.168.1.50"}]
+  }'
+```
+
+Dans les logs de MirageIA, vous verrez les PII détectées et pseudonymisées. La requête envoyée à Anthropic ne contiendra ni l'email ni l'IP originale.
+
+---
+
+## Configuration
+
+MirageIA fonctionne sans configuration (zéro config). Pour personnaliser, créez `~/.mirageia/config.toml` :
+
+```toml
+[proxy]
+listen_addr = "127.0.0.1:3100"  # Adresse d'écoute
+log_level = "info"               # debug, info, warn, error
+add_header = false               # Ajouter X-MirageIA: active aux requêtes
+fail_open = true                 # Transmettre la requête si la pseudonymisation échoue
+
+[detection]
+confidence_threshold = 0.75      # Seuil de confiance (0.0–1.0)
+whitelist = [                    # Termes à ne jamais pseudonymiser
+    "localhost",
+    "127.0.0.1",
+    "Thomas Edison",
+]
+```
+
+Les variables d'environnement prennent le dessus sur le fichier :
+
+| Variable | Description |
+|---|---|
+| `MIRAGEIA_LISTEN_ADDR` | Adresse d'écoute (ex: `0.0.0.0:3100`) |
+| `MIRAGEIA_ANTHROPIC_URL` | URL de base Anthropic |
+| `MIRAGEIA_OPENAI_URL` | URL de base OpenAI |
+| `MIRAGEIA_LOG_LEVEL` | Niveau de log |
+
+---
+
+## Types de PII détectés
+
+Le détecteur regex (v1) couvre les PII à pattern fixe :
+
+| Type | Exemples | Pseudonyme généré |
 |---|---|---|
-| **Détection** | LLM embarqué (ONNX) — comprend le contexte | Regex / NER classique |
-| **Intelligence** | Ne masque pas "Thomas Edison" dans un cours d'histoire | Masque tout aveuglément |
-| **Architecture** | Binaire unique, zéro dépendance | Python + Docker + serveur externe |
-| **Réversibilité** | Pseudonymes cohérents avec mapping chiffré | `[REDACTED]` — information perdue |
-| **Streaming** | Compatible SSE natif | Rarement supporté |
-| **Sécurité** | Mapping AES-256-GCM en mémoire, jamais persisté | Souvent en clair |
+| Email | `jean@acme.fr` | `alice@example.com` |
+| IPv4 | `192.168.1.50` | `10.0.84.12` |
+| IPv6 | `2001:db8::1` | `fd00::a1b2:c3d4` |
+| Téléphone | `06 12 34 56 78` | `06 47 91 28 53` (format préservé) |
+| Carte bancaire | `4111 1111 1111 1111` | `4892 7631 0458 2173` (Luhn valide) |
+| IBAN | `FR7612345678901234567890` | `FR8398765432109876543210` |
+| Clé API / token | `sk-abc123def456...` | `sk-xR9mK2pL7wQ4...` (préfixe préservé) |
+| N° sécurité sociale | `1 85 07 75 123 456 78` | `2 91 03 69 847 215 34` |
+
+Le détecteur ONNX contextuel (v2, en cours) ajoutera la détection de noms de personnes, adresses postales, et comprendra le contexte ("Thomas Edison" dans un cours d'histoire → pas masqué).
+
+---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                 MirageIA (processus unique)              │
-│                                                         │
-│  ┌──────────┐    ┌──────────────┐    ┌───────────────┐  │
-│  │  Proxy   │───▶│  Détecteur   │───▶│ Pseudonymiseur│  │
-│  │  HTTP    │    │  PII (ONNX)  │    │               │  │
-│  │  (axum)  │◀───│              │◀───│  Mapping table│  │
-│  └──────────┘    └──────────────┘    └───────────────┘  │
-│       ▲                                     │           │
-│       │              ┌──────────┐           │           │
-│       └──────────────│ Dashboard│───────────┘           │
-│                      │ (Tauri)  │                       │
-│                      └──────────┘                       │
-└─────────────────────────────────────────────────────────┘
-        ▲                                     │
-        │ requête originale        requête nettoyée
-        │                                     ▼
-  ┌───────────┐                      ┌──────────────┐
-  │ Claude    │                      │ API Anthropic│
-  │ Code, etc.│                      │ / OpenAI     │
-  └───────────┘                      └──────────────┘
+src/
+├── main.rs                  CLI (proxy / detect)
+├── lib.rs                   Modules publics
+├── config/
+│   └── settings.rs          AppConfig, chargement TOML + env
+├── proxy/
+│   ├── server.rs            Handler axum, pipeline complet
+│   ├── router.rs            Routage Anthropic / OpenAI par path
+│   ├── client.rs            Client HTTP upstream (reqwest)
+│   ├── extractor.rs         Extraction/rebuild JSON par provider
+│   └── error.rs             Types d'erreurs proxy
+├── detection/
+│   ├── regex_detector.rs    Détecteur PII par regex (v1)
+│   ├── types.rs             PiiType, PiiEntity, label_to_pii_type
+│   ├── model.rs             Modèle ONNX (feature-gated, v2)
+│   ├── tokenizer.rs         Tokenizer HuggingFace, segmentation
+│   ├── postprocess.rs       Softmax, BIO decode, fusion entités
+│   └── error.rs             Erreurs de détection
+├── pseudonymization/
+│   ├── generator.rs         Générateur de pseudonymes par type
+│   ├── replacer.rs          Remplacement dans le texte (offsets)
+│   ├── depseudonymizer.rs   Dé-pseudonymisation (AhoCorasick)
+│   └── dictionaries.rs      Prénoms/noms embarqués
+├── mapping/
+│   ├── table.rs             Table bidirectionnelle (SHA-256 + AES-256-GCM)
+│   ├── crypto.rs            Chiffrement/déchiffrement, zéroisation
+│   └── error.rs             Erreurs de mapping
+└── streaming/
+    ├── sse_parser.rs        Parse/rebuild SSE Anthropic/OpenAI
+    └── buffer.rs            Buffer pour pseudonymes split entre tokens
 ```
 
-## Fonctionnement
+### Pipeline de traitement
 
-1. Votre application envoie une requête à `localhost:3100` au lieu de l'API directe
-2. MirageIA extrait le contenu textuel des messages
-3. Le modèle ONNX embarqué détecte les PII avec compréhension du contexte
-4. Chaque PII est remplacée par un pseudonyme cohérent (même type de donnée)
-5. Le mapping `{original ↔ pseudonyme}` est stocké chiffré en mémoire (AES-256-GCM)
-6. La requête nettoyée est envoyée à l'API LLM
-7. La réponse est interceptée et les pseudonymes sont remplacés par les originaux
-8. Votre application reçoit la réponse restaurée — transparence totale
+```
+REQUÊTE ENTRANTE
+    │
+    ▼
+[Extraction JSON]  ← extractor.rs (champs textuels Anthropic/OpenAI)
+    │
+    ▼
+[Détection PII]    ← regex_detector.rs (emails, IPs, tels, CB, IBAN, clés)
+    │                 + whitelist filtering
+    ▼
+[Pseudonymisation] ← replacer.rs (positions décroissantes)
+    │                 + generator.rs (pseudonymes cohérents par type)
+    │                 + mapping/table.rs (AES-256-GCM en mémoire)
+    ▼
+[Reconstruction]   ← extractor.rs (rebuild JSON)
+    │
+    ▼
+[Forward]          ← client.rs → API upstream
+    │
+    ▼
+RÉPONSE UPSTREAM
+    │
+    ▼
+[Dé-pseudo]        ← depseudonymizer.rs (AhoCorasick, longest-first)
+    │                 ou buffer.rs (streaming SSE, split entre tokens)
+    ▼
+RÉPONSE CLIENT (données originales restaurées)
+```
 
-## Types de PII détectés
+---
 
-- Noms de personnes, prénoms, pseudonymes
-- Adresses email
-- Adresses IP (v4, v6)
-- Numéros de téléphone
-- Adresses postales
-- Numéros de carte bancaire, IBAN
-- Identifiants (numéro de sécu, passeport, etc.)
-- Clés API, tokens, secrets
-- URLs internes / noms de domaines privés
-- Noms de serveurs, chemins de fichiers sensibles
+## Tests
 
-## Stack technique
+```bash
+# Tous les tests (133)
+cargo test
 
-| Composant | Technologie |
-|-----------|-------------|
-| Runtime | Rust + Tauri (binaire unique, cross-platform) |
-| Modèle PII | ONNX Runtime (DistilBERT-PII ou Qwen3 0.6B quantifié) |
-| Proxy HTTP | axum / hyper |
-| Mapping | En mémoire, chiffré AES-256-GCM, non persisté |
-| Interface | Tray icon + dashboard local (Tauri webview) |
-| Tests | cargo test + fixtures PII |
+# Tests unitaires uniquement
+cargo test --lib
+
+# Tests e2e (proxy + mock upstream)
+cargo test --test e2e_proxy
+
+# Tests d'un module spécifique
+cargo test -- detection::regex_detector
+cargo test -- mapping::crypto
+cargo test -- pseudonymization
+```
+
+### Couverture des tests
+
+| Module | Tests | Couverture |
+|---|---:|---|
+| config | 5 | Config par défaut, parsing TOML, partiel, vide |
+| proxy/router | 7 | Routage Anthropic/OpenAI, URLs |
+| proxy/extractor | 9 | Extraction/rebuild JSON, content string/array, system |
+| detection/types | 7 | Labels, seuils, aliases, display |
+| detection/postprocess | 11 | Softmax, extraction, fusion, multi-token, seuils |
+| detection/tokenizer | 5 | Segmentation, overlap, progression |
+| detection/regex_detector | 16 | Email, IP, phone, CB, IBAN, API key, whitelist |
+| detection/model | 2 | Répertoire modèles, fichiers manquants |
+| detection/mod | 4 | Chargement label_map |
+| mapping/crypto | 6 | AES-256-GCM roundtrip, nonces, unicode |
+| mapping/table | 8 | Bidirectionnel, concurrent, IDs uniques |
+| pseudonymization/generator | 13 | Tous les types PII, Luhn, format |
+| pseudonymization/replacer | 5 | Positions, cohérence session |
+| pseudonymization/depseudonymizer | 6 | Roundtrip, longest-first |
+| streaming/sse_parser | 7 | Anthropic, OpenAI, DONE, rebuild |
+| streaming/buffer | 7 | Split pseudonyme, flush |
+| **e2e** | **7** | **Pipeline complet avec mock upstream** |
+| **Total** | **133** | |
+
+---
 
 ## Statut du projet
 
-> En cours de développement — phase de conception et prototypage.
+| Composant | Statut | Notes |
+|---|---|---|
+| Proxy HTTP transparent | ✅ Terminé | axum, routage Anthropic/OpenAI |
+| Détection PII regex | ✅ Terminé | 8 types de PII |
+| Pseudonymisation réversible | ✅ Terminé | Mapping AES-256-GCM |
+| Dé-pseudonymisation réponses | ✅ Terminé | Non-streaming + SSE buffer |
+| Configuration TOML + whitelist | ✅ Terminé | ~/.mirageia/config.toml |
+| Fail-open | ✅ Terminé | Passthrough si erreur |
+| Tests e2e | ✅ Terminé | 133 tests |
+| Détection ONNX contextuelle | 🔧 Structuré | Code prêt, ONNX Runtime bloqué par toolchain MSVC |
+| Dashboard Tauri | 📋 Planifié | Phase 4 |
+
+---
 
 ## Documentation
 
 | Sujet | Lien |
 |-------|------|
+| **Installation** | [`docs/officiel/installation.md`](docs/officiel/installation.md) |
+| **Distribution & installeur** | [`docs/officiel/distribution.md`](docs/officiel/distribution.md) |
+| **Guide de contribution** | [`docs/officiel/contribution.md`](docs/officiel/contribution.md) |
 | Architecture globale | [`docs/officiel/architecture/vue-ensemble.md`](docs/officiel/architecture/vue-ensemble.md) |
+| Architecture détaillée | [`docs/officiel/architecture/architecture-detaillee.md`](docs/officiel/architecture/architecture-detaillee.md) |
 | Flux de pseudonymisation | [`docs/officiel/architecture/flux-pseudonymisation.md`](docs/officiel/architecture/flux-pseudonymisation.md) |
 | Modèle PII embarqué | [`docs/officiel/technique/modele-pii.md`](docs/officiel/technique/modele-pii.md) |
 | Proxy HTTP | [`docs/officiel/technique/proxy-http.md`](docs/officiel/technique/proxy-http.md) |
+| Analyse sécurité RSSI | [`docs/officiel/securite/analyse-rssi.md`](docs/officiel/securite/analyse-rssi.md) |
 | État de l'art / concurrents | [`docs/recherche/etat-de-lart.md`](docs/recherche/etat-de-lart.md) |
 | Tickets | [`docs/tickets/`](docs/tickets/) |
-| Index documentation | [`docs/README.md`](docs/README.md) |
 
 ## Licence
 
-À définir.
+MIT
