@@ -496,7 +496,27 @@ async fn test_dashboard_returns_html() {
 #[tokio::test]
 async fn test_shutdown_endpoint() {
     let (upstream_addr, _) = start_mock_upstream().await;
-    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let mut config = mirageia::config::AppConfig::default();
+    config.listen_addr = "127.0.0.1:0".to_string();
+    config.anthropic_base_url = format!("http://{}", upstream_addr);
+
+    let state = Arc::new(mirageia::proxy::create_state(config));
+    let mut shutdown_rx = state.shutdown_tx.subscribe();
+    let app = mirageia::proxy::create_router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.wait_for(|&v| v).await;
+            })
+            .await
+            .unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let client = reqwest::Client::new();
 
@@ -517,7 +537,7 @@ async fn test_shutdown_endpoint() {
     assert_eq!(resp.status(), 200);
 
     // Laisser le temps au serveur de s'arrêter
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Le proxy ne doit plus répondre
     let result = client
