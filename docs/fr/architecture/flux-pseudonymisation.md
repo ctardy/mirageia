@@ -46,19 +46,29 @@ Requête entrante
 Réponse API LLM
        │
        ▼
-┌──────────────────┐
-│ 1. Scan réponse  │  Rechercher tous les pseudonymes connus dans le texte
-└──────────────────┘
+┌──────────────────────────┐
+│ 1. Remplacement tokens   │  Rechercher tous les pseudonymes complets
+│    complets (AhoCorasick) │  et les remplacer par les valeurs originales
+└──────────────────────────┘
        │
        ▼
-┌──────────────────┐
-│ 2. Remplacement  │  Remplacer chaque pseudonyme par la valeur originale
-│    inverse       │  via la table de mapping
-└──────────────────┘
-       │
+┌──────────────────────────┐
+│ 2. SPB — Sub-PII Binding │  Détecter les fragments de pseudonymes
+│    Restauration fragments │  décomposés par le LLM (octets IP,
+└──────────────────────────┘  groupes CC, segments NSS) et les
+       │                      remplacer par les fragments originaux
        ▼
   Réponse restaurée → Application
 ```
+
+### SPB — Sub-PII Binding (restauration de fragments)
+
+Quand le LLM analyse un pseudonyme, il peut en extraire des sous-parties dans sa réponse :
+- **IPs** : octets individuels (ex: "premier octet: 10")
+- **Cartes bancaires** : groupes de chiffres dans un calcul Luhn
+- **NSS** : segments (sexe, année, mois, département)
+
+Le SPB détecte ces fragments et les remplace par les sous-parties correspondantes de la valeur originale, garantissant la cohérence entre la PII restaurée et l'analyse du LLM.
 
 ## Cas particuliers
 
@@ -75,6 +85,11 @@ Réponse API LLM
 - Même donnée = même pseudonyme dans toute la conversation
 - "Tardy" sera toujours remplacé par "Gerard" dans la même session
 - Entre sessions, les pseudonymes changent (pas de persistance)
+
+### Cohérence de sous-réseau (IPs groupées)
+- Plusieurs IPs dans le même /24 reçoivent des pseudonymes avec le même préfixe réseau
+- La partie hôte est préservée (ex: 10.0.1.10/20/30 → 142.87.53.10/20/30)
+- Garantit que le raisonnement du LLM sur les relations réseau reste correct
 
 ### Faux positifs
 - Le modèle peut détecter un faux positif (ex: un nom de variable qui ressemble à un nom)

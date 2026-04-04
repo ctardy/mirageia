@@ -113,6 +113,24 @@ impl MappingTable {
         pairs
     }
 
+    /// Retourne tous les pseudonymes avec leur valeur originale et le type de PII.
+    /// Triés par longueur de pseudonyme décroissante.
+    pub fn all_entries_with_type(&self) -> Vec<(String, String, PiiType)> {
+        let map = self.by_pseudonym.read().unwrap();
+        let mut entries: Vec<(String, String, PiiType)> = map
+            .iter()
+            .filter_map(|(pseudo, entry)| {
+                self.crypto
+                    .decrypt(&entry.encrypted_original)
+                    .ok()
+                    .map(|original| (pseudo.clone(), original, entry.pii_type))
+            })
+            .collect();
+
+        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        entries
+    }
+
     /// Nombre d'entrées dans la table.
     pub fn len(&self) -> usize {
         self.by_original_hash.read().unwrap().len()

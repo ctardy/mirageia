@@ -46,19 +46,29 @@ Incoming request
 LLM API Response
        │
        ▼
-┌──────────────────┐
-│ 1. Scan response │  Search for all known pseudonyms in the text
-└──────────────────┘
+┌────────────────────────────┐
+│ 1. Complete token          │  Search for all complete pseudonyms
+│    replacement (AhoCorasick)│  and replace with original values
+└────────────────────────────┘
        │
        ▼
-┌──────────────────┐
-│ 2. Reverse       │  Replace each pseudonym with the original value
-│    replacement   │  via the mapping table
-└──────────────────┘
-       │
+┌────────────────────────────┐
+│ 2. SPB — Sub-PII Binding   │  Detect pseudonym fragments
+│    Fragment restoration     │  decomposed by the LLM (IP octets,
+└──────────────────────��─────┘  CC groups, SSN segments) and
+       │                        replace with original fragments
        ▼
   Restored response → Application
 ```
+
+### SPB — Sub-PII Binding (fragment restoration)
+
+When the LLM analyzes a pseudonym, it may extract sub-parts in its response:
+- **IPs**: individual octets (e.g., "first octet: 10")
+- **Credit cards**: digit groups in a Luhn calculation
+- **National IDs**: segments (gender, year, month, department)
+
+The SPB detects these fragments and replaces them with the corresponding sub-parts of the original value, ensuring consistency between the restored PII and the LLM's analysis.
 
 ## Edge Cases
 
@@ -75,6 +85,11 @@ LLM API Response
 - Same data = same pseudonym throughout the entire conversation
 - "Tardy" will always be replaced by "Gerard" within the same session
 - Between sessions, pseudonyms change (no persistence)
+
+### Subnet Coherence (grouped IPs)
+- Multiple IPs in the same /24 receive pseudonyms with the same network prefix
+- The host part is preserved (e.g., 10.0.1.10/20/30 → 142.87.53.10/20/30)
+- Ensures the LLM's reasoning about network relationships remains correct
 
 ### False Positives
 - The model may detect a false positive (e.g., a variable name that looks like a person's name)

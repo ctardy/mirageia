@@ -1,10 +1,16 @@
 use aho_corasick::AhoCorasick;
 
 use crate::mapping::MappingTable;
+use crate::pseudonymization::fragment_restorer::restore_fragments;
 
 /// Dé-pseudonymise un texte en remplaçant les pseudonymes par les valeurs originales.
-/// Utilise AhoCorasick pour une recherche multi-pattern efficace.
-/// Les pseudonymes les plus longs sont remplacés en priorité.
+///
+/// Deux passes :
+/// 1. **Remplacement principal** (AhoCorasick) : remplace les tokens complets
+///    (pseudonymes entiers → valeurs originales).
+/// 2. **Restauration de fragments** (SPB — Sub-PII Binding) : détecte et remplace
+///    les sous-parties de pseudonymes que le LLM a extraites dans son analyse
+///    (octets d'IP, groupes de chiffres CC, segments NSS, etc.).
 pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
     let pairs = mapping.all_pseudonyms_sorted(); // triés par longueur décroissante
 
@@ -19,7 +25,12 @@ pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
         .match_kind(aho_corasick::MatchKind::LeftmostLongest)
         .build(&patterns)
         .expect("Erreur AhoCorasick");
-    ac.replace_all(text, &replacements)
+
+    // Passe 1 : remplacement des tokens complets
+    let result = ac.replace_all(text, &replacements);
+
+    // Passe 2 : restauration des fragments (SPB)
+    restore_fragments(&result, mapping)
 }
 
 #[cfg(test)]

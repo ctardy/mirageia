@@ -388,7 +388,26 @@ Message 5: "Tardy confirmed by email"
 
 Consistency is ensured by a lookup in the mapping table **before** generating a new pseudonym.
 
-### 5.4 Text Replacement
+### 5.4 Subnet Coherence for Grouped IPs
+
+When multiple IPv4 addresses share the same /24 network prefix, MirageIA generates pseudonyms that **preserve this relationship**:
+
+```
+Originals:   10.0.1.10, 10.0.1.20, 10.0.1.30  (same /24: 10.0.1.0)
+Pseudonyms:  142.87.53.10, 142.87.53.20, 142.87.53.30
+             ^^^^^^^^^^                    ^^^^^^^^^^
+             same pseudo prefix            host part preserved
+```
+
+This ensures the LLM reasons correctly about network relationships (same subnet, broadcast, etc.) even when working with pseudonyms.
+
+**Algorithm**:
+1. Before generation, group IPs by /24 prefix
+2. For each group of ≥ 2 IPs, generate a shared pseudo prefix
+3. Preserve the original host part (last octet)
+4. Isolated IPs use standard generation (10.0.x.x)
+
+### 5.5 Text Replacement
 
 Replacements are performed in **descending position order** to preserve offsets:
 
@@ -406,7 +425,7 @@ Result: "Contact Gerard (paul@example.com) for the project"
 
 If replacements were done in ascending order, replacing "Tardy" (5 → 6 chars) would shift the email's position.
 
-### 5.5 Variable-Length Pseudonyms
+### 5.6 Variable-Length Pseudonyms
 
 When a pseudonym has a different length than the original, all offsets in the JSON are recalculated. The JSON body is reconstructed after all replacements, not modified in-place.
 
@@ -475,23 +494,76 @@ Scans LLM API responses to find known pseudonyms and replace them with original 
 
 ### 7.2 Algorithm (complete response)
 
+De-pseudonymization is performed in **two passes**:
+
 ```
 API Response (text)
     │
     ▼
-For each entry in mapping.by_pseudonym:
+┌─────────────────────────────────────────┐
+│ Pass 1 — Complete token replacement     │
+│ (AhoCorasick)                           │
+│                                         │
+│ For each pseudonym in the mapping:      │
+│   → Exact search in the text            │
+│   → Replace with original value         │
+│   → Longest first (priority)            │
+└─────────────────────────────────────────┘
     │
-    ├── Search for the pseudonym in the response text
-    │   (exact search, case-sensitive)
-    │
-    ├── If found:
-    │   └── Replace with the original value (decrypted)
-    │
-    └── If not found: continue
+    ▼
+┌─────────────────────────────────────────┐
+│ Pass 2 — SPB (Sub-PII Binding)          │
+│ Fragment restoration                    │
+│                                         │
+│ For each mapping of a decomposable type │
+│ (IP, CC, SSN):                          │
+│   → Extract structural fragments        │
+│     (IP octets, CC groups, SSN segments)│
+│   → Replace pseudo fragments with       │
+│     original fragments                  │
+│   → With false-positive guards          │
+│     (word boundaries, context)          │
+└─────────────────────────────────────────┘
     │
     ▼
 Restored response
 ```
+
+#### Why SPB is needed
+
+When the LLM receives a pseudonym, it may decompose it in its response:
+
+```
+Request  : "Write this IP in decimal notation: 10.0.84.12"
+                                                ^^^^^^^^^^
+                                                (pseudonym of 172.16.254.3)
+
+Response : "The address 10.0.84.12 has octets: 10, 0, 84, 12.
+            The first octet 10 indicates a class A network."
+
+After pass 1: "The address 172.16.254.3 has octets: 10, 0, 84, 12.
+               The first octet 10 indicates a class A network."
+                                       ^^^^^^^^^^^^^^^^^^^^^^
+                                       pseudo fragments not restored!
+
+After pass 2: "The address 172.16.254.3 has octets: 172, 16, 254, 3.
+(SPB)          The first octet 172 indicates a class B network."
+               ✓ Consistent
+```
+
+#### Decomposable types supported by SPB
+
+| PII Type | Fragments | Example |
+|----------|-----------|---------|
+| `IpAddress` (v4) | Octets (separator `.`) | 10.0.84.12 → [10, 0, 84, 12] |
+| `CreditCard` | Groups of 4 digits | 4832759104628371 → [4832, 7591, 0462, 8371] |
+| `NationalId` | Segments (separator space) | 2 91 03 42 → [2, 91, 03, 42] |
+
+#### False-positive guards
+
+- **Fragments ≥ 2 characters**: replacement with word boundaries (`\b`)
+- **Single-character fragments**: replacement only in analytical context (after `=`, `:`, or `,`)
+- **Deduplication**: if the same pseudo fragment maps to multiple different originals (ambiguity), it is not replaced
 
 ### 7.3 De-pseudonymization Edge Cases
 
@@ -782,7 +854,8 @@ src-tauri/
 │   │   ├── mod.rs               Public pseudonymization module
 │   │   ├── generator.rs         Pseudonym generation by type
 │   │   ├── replacer.rs          Text replacement (offset management)
-│   │   ├── depseudonymizer.rs   Response de-pseudonymization
+│   │   ├── depseudonymizer.rs   Response de-pseudonymization (pass 1 + SPB)
+│   │   ├── fragment_restorer.rs Fragment restoration (SPB — Sub-PII Binding)
 │   │   └── dictionaries.rs      Built-in dictionaries (first names, last names)
 │   │
 │   ├── mapping/

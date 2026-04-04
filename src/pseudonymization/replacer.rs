@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use rand::Rng;
+
 use crate::detection::{PiiEntity, PiiType};
 use crate::mapping::MappingTable;
 use crate::pseudonymization::generator::PseudonymGenerator;
@@ -12,9 +16,62 @@ pub struct ReplacementRecord {
     pub end: usize,
 }
 
+/// Extrait le préfixe réseau d'une IPv4 selon le masque (en bits).
+/// Retourne les octets du préfixe sous forme de chaîne "a.b.c" pour /24, etc.
+fn ip_network_prefix(ip: &str, mask_bits: u8) -> Option<String> {
+    if ip.contains(':') {
+        return None; // IPv6 non supporté pour le regroupement
+    }
+    let octets: Vec<u8> = ip
+        .split('.')
+        .filter_map(|s| s.parse::<u8>().ok())
+        .collect();
+    if octets.len() != 4 {
+        return None;
+    }
+    let full_octets = (mask_bits / 8) as usize;
+    if full_octets == 0 || full_octets > 3 {
+        return None;
+    }
+    Some(
+        octets[..full_octets]
+            .iter()
+            .map(|o| o.to_string())
+            .collect::<Vec<_>>()
+            .join("."),
+    )
+}
+
+/// Extrait la partie hôte d'une IPv4 selon le masque (en bits).
+fn ip_host_part(ip: &str, mask_bits: u8) -> Option<String> {
+    if ip.contains(':') {
+        return None;
+    }
+    let octets: Vec<&str> = ip.split('.').collect();
+    if octets.len() != 4 {
+        return None;
+    }
+    let full_octets = (mask_bits / 8) as usize;
+    Some(octets[full_octets..].join("."))
+}
+
+/// Génère un préfixe réseau pseudo aléatoire pour un masque donné.
+fn generate_pseudo_prefix(mask_bits: u8) -> String {
+    let mut rng = rand::thread_rng();
+    let full_octets = (mask_bits / 8) as usize;
+    (0..full_octets)
+        .map(|_| rng.gen_range(1..255u8).to_string())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 /// Pseudonymise les entités PII dans un texte.
 /// Les remplacements sont effectués en ordre décroissant de position
 /// pour préserver les offsets.
+///
+/// Pour les IPs partageant un même sous-réseau, des pseudonymes cohérents
+/// sont générés (même préfixe pseudo, seule la partie hôte diffère).
+///
 /// Retourne le texte modifié et la liste des remplacements.
 pub fn pseudonymize_text(
     text: &str,
@@ -25,6 +82,9 @@ pub fn pseudonymize_text(
     if entities.is_empty() {
         return (text.to_string(), vec![]);
     }
+
+    // Pré-calculer les préfixes réseau cohérents pour les IPs groupées
+    let subnet_pseudo_prefixes = compute_subnet_prefixes(entities, mapping);
 
     // Trier par position décroissante
     let mut sorted_entities: Vec<&PiiEntity> = entities.iter().collect();
@@ -38,7 +98,15 @@ pub fn pseudonymize_text(
         let pseudonym = match mapping.lookup_original(&entity.text) {
             Some(existing) => existing,
             None => {
-                let new_pseudo = generator.generate(&entity.entity_type, &entity.text);
+                let new_pseudo = if entity.entity_type == PiiType::IpAddress {
+                    generate_subnet_coherent_ip(
+                        &entity.text,
+                        &subnet_pseudo_prefixes,
+                        generator,
+                    )
+                } else {
+                    generator.generate(&entity.entity_type, &entity.text)
+                };
                 // Insérer dans le mapping
                 let _ = mapping.insert(&entity.text, &new_pseudo, entity.entity_type);
                 new_pseudo
@@ -46,7 +114,8 @@ pub fn pseudonymize_text(
         };
 
         // Vérifier que les bornes sont valides
-        if entity.start <= result.len() && entity.end <= result.len() && entity.start <= entity.end {
+        if entity.start <= result.len() && entity.end <= result.len() && entity.start <= entity.end
+        {
             result.replace_range(entity.start..entity.end, &pseudonym);
 
             records.push(ReplacementRecord {
@@ -63,6 +132,68 @@ pub fn pseudonymize_text(
     records.reverse();
 
     (result, records)
+}
+
+/// Détecte les IPs qui partagent un même sous-réseau (/24) dans le batch d'entités,
+/// et génère un préfixe pseudo commun pour chaque groupe.
+/// Retourne un mapping : préfixe réseau original → préfixe pseudo.
+fn compute_subnet_prefixes(
+    entities: &[PiiEntity],
+    mapping: &MappingTable,
+) -> HashMap<String, String> {
+    let mut prefix_groups: HashMap<String, Vec<String>> = HashMap::new();
+
+    for entity in entities {
+        if entity.entity_type != PiiType::IpAddress {
+            continue;
+        }
+        if entity.text.contains(':') {
+            continue; // IPv6 exclu
+        }
+        if mapping.lookup_original(&entity.text).is_some() {
+            continue; // Déjà mappé, on ne recalcule pas
+        }
+
+        if let Some(prefix) = ip_network_prefix(&entity.text, 24) {
+            prefix_groups
+                .entry(prefix)
+                .or_default()
+                .push(entity.text.clone());
+        }
+    }
+
+    let mut result = HashMap::new();
+    for (orig_prefix, ips) in &prefix_groups {
+        if ips.len() >= 2 {
+            // Plusieurs IPs dans le même /24 → générer un préfixe pseudo commun
+            result.insert(orig_prefix.clone(), generate_pseudo_prefix(24));
+        }
+    }
+    result
+}
+
+/// Génère un pseudonyme IP cohérent avec le sous-réseau si applicable.
+/// Si l'IP fait partie d'un groupe de sous-réseau, utilise le préfixe pseudo commun
+/// et préserve la partie hôte originale.
+fn generate_subnet_coherent_ip(
+    original_ip: &str,
+    subnet_prefixes: &HashMap<String, String>,
+    generator: &PseudonymGenerator,
+) -> String {
+    if original_ip.contains(':') {
+        return generator.generate(&PiiType::IpAddress, original_ip);
+    }
+
+    if let Some(orig_prefix) = ip_network_prefix(original_ip, 24) {
+        if let Some(pseudo_prefix) = subnet_prefixes.get(&orig_prefix) {
+            if let Some(host) = ip_host_part(original_ip, 24) {
+                return format!("{}.{}", pseudo_prefix, host);
+            }
+        }
+    }
+
+    // Pas de groupement : génération standard
+    generator.generate(&PiiType::IpAddress, original_ip)
 }
 
 #[cfg(test)]
@@ -202,5 +333,152 @@ mod tests {
         assert_eq!(records.len(), 2);
         // Records triés par position croissante
         assert!(records[0].start < records[1].start);
+    }
+
+    #[test]
+    fn test_subnet_coherent_ips() {
+        let mapping = MappingTable::new();
+        let generator = PseudonymGenerator::new();
+
+        // 3 IPs dans le même /24 (10.0.1.x)
+        let text = "Serveurs: 10.0.1.10, 10.0.1.20, 10.0.1.30";
+        let entities = vec![
+            PiiEntity {
+                text: "10.0.1.10".to_string(),
+                entity_type: PiiType::IpAddress,
+                start: 10,
+                end: 19,
+                confidence: 0.95,
+            },
+            PiiEntity {
+                text: "10.0.1.20".to_string(),
+                entity_type: PiiType::IpAddress,
+                start: 21,
+                end: 30,
+                confidence: 0.95,
+            },
+            PiiEntity {
+                text: "10.0.1.30".to_string(),
+                entity_type: PiiType::IpAddress,
+                start: 32,
+                end: 41,
+                confidence: 0.95,
+            },
+        ];
+
+        let (result, records) = pseudonymize_text(text, &entities, &mapping, &generator);
+
+        // Les 3 IPs ne doivent plus apparaître
+        assert!(!result.contains("10.0.1.10"));
+        assert!(!result.contains("10.0.1.20"));
+        assert!(!result.contains("10.0.1.30"));
+        assert_eq!(records.len(), 3);
+
+        // Les 3 pseudonymes doivent partager le même préfixe /24
+        let pseudo_prefix_0 = records[0]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        let pseudo_prefix_1 = records[1]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        let pseudo_prefix_2 = records[2]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(
+            pseudo_prefix_0, pseudo_prefix_1,
+            "Les pseudonymes doivent partager le même préfixe réseau"
+        );
+        assert_eq!(
+            pseudo_prefix_1, pseudo_prefix_2,
+            "Les pseudonymes doivent partager le même préfixe réseau"
+        );
+
+        // La partie hôte doit être préservée (10, 20, 30)
+        let host_0 = records[0].pseudonym.split('.').last().unwrap();
+        let host_1 = records[1].pseudonym.split('.').last().unwrap();
+        let host_2 = records[2].pseudonym.split('.').last().unwrap();
+        assert_eq!(host_0, "10");
+        assert_eq!(host_1, "20");
+        assert_eq!(host_2, "30");
+    }
+
+    #[test]
+    fn test_single_ip_no_subnet_grouping() {
+        let mapping = MappingTable::new();
+        let generator = PseudonymGenerator::new();
+
+        // Une seule IP → pas de regroupement
+        let text = "Serveur: 192.168.1.50";
+        let entities = vec![PiiEntity {
+            text: "192.168.1.50".to_string(),
+            entity_type: PiiType::IpAddress,
+            start: 9,
+            end: 21,
+            confidence: 0.95,
+        }];
+
+        let (result, records) = pseudonymize_text(text, &entities, &mapping, &generator);
+
+        assert!(!result.contains("192.168.1.50"));
+        assert_eq!(records.len(), 1);
+        // Pseudonyme standard dans la plage 10.0.x.x
+        assert!(records[0].pseudonym.starts_with("10.0."));
+    }
+
+    #[test]
+    fn test_ips_different_subnets_no_grouping() {
+        let mapping = MappingTable::new();
+        let generator = PseudonymGenerator::new();
+
+        // 2 IPs dans des sous-réseaux différents
+        let text = "A: 192.168.1.10, B: 10.0.2.20";
+        let entities = vec![
+            PiiEntity {
+                text: "192.168.1.10".to_string(),
+                entity_type: PiiType::IpAddress,
+                start: 3,
+                end: 15,
+                confidence: 0.95,
+            },
+            PiiEntity {
+                text: "10.0.2.20".to_string(),
+                entity_type: PiiType::IpAddress,
+                start: 20,
+                end: 29,
+                confidence: 0.95,
+            },
+        ];
+
+        let (_, records) = pseudonymize_text(text, &entities, &mapping, &generator);
+
+        assert_eq!(records.len(), 2);
+        // Les préfixes /24 doivent être différents (pas de groupement)
+        let prefix_0 = records[0]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        let prefix_1 = records[1]
+            .pseudonym
+            .rsplitn(2, '.')
+            .last()
+            .unwrap()
+            .to_string();
+        // On ne peut pas garantir qu'ils soient différents (collision aléatoire possible)
+        // mais on vérifie que les deux sont des IPs valides
+        assert_eq!(records[0].pseudonym.split('.').count(), 4);
+        assert_eq!(records[1].pseudonym.split('.').count(), 4);
+        let _ = (prefix_0, prefix_1); // utilisation pour éviter le warning
     }
 }

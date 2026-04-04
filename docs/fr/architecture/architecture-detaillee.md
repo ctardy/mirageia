@@ -388,7 +388,26 @@ Message 5 : "Tardy a confirmé par email"
 
 La cohérence est assurée par un lookup dans la table de mapping **avant** de générer un nouveau pseudonyme.
 
-### 5.4 Remplacement dans le texte
+### 5.4 Cohérence de sous-réseau pour les IPs groupées
+
+Quand plusieurs IPs IPv4 partagent un même préfixe réseau /24, MirageIA génère des pseudonymes qui **préservent cette relation** :
+
+```
+Originales : 10.0.1.10, 10.0.1.20, 10.0.1.30  (même /24 : 10.0.1.0)
+Pseudonymes : 142.87.53.10, 142.87.53.20, 142.87.53.30
+              ^^^^^^^^^^                    ^^^^^^^^^^
+              même préfixe pseudo           partie hôte préservée
+```
+
+Cela garantit que le LLM raisonne correctement sur les relations réseau (même sous-réseau, broadcast, etc.) même s'il travaille sur des pseudonymes.
+
+**Algorithme** :
+1. Avant génération, regrouper les IPs par préfixe /24
+2. Pour chaque groupe de ≥ 2 IPs, générer un préfixe pseudo commun
+3. Conserver la partie hôte originale (dernier octet)
+4. Les IPs isolées utilisent la génération standard (10.0.x.x)
+
+### 5.5 Remplacement dans le texte
 
 Les remplacements sont effectués en **ordre décroissant de position** pour préserver les offsets :
 
@@ -406,7 +425,7 @@ Résultat : "Contactez Gerard (paul@example.com) pour le projet"
 
 Si on remplaçait dans l'ordre croissant, le remplacement de "Tardy" (5 → 6 chars) décalerait la position de l'email.
 
-### 5.5 Pseudonymes de longueur variable
+### 5.6 Pseudonymes de longueur variable
 
 Quand un pseudonyme a une longueur différente de l'original, tous les offsets dans le JSON sont recalculés. Le body JSON est reconstruit après tous les remplacements, pas modifié in-place.
 
@@ -475,23 +494,77 @@ Scanne les réponses de l'API LLM pour trouver les pseudonymes connus et les rem
 
 ### 7.2 Algorithme (réponse complète)
 
+La dé-pseudonymisation s'effectue en **deux passes** :
+
 ```
 Réponse API (texte)
     │
     ▼
-Pour chaque entrée dans mapping.by_pseudonym :
+┌���────────────────────────────────────────┐
+│ Passe 1 — Remplacement des tokens      │
+│ complets (AhoCorasick)                  │
+│                                         │
+│ Pour chaque pseudonyme dans le mapping : │
+│   → Recherche exacte dans le texte      │
+│   → Remplacement par la valeur originale │
+│   → Plus longs d'abord (priorité)       │
+└────────────────���────────────────────────┘
     │
-    ├── Rechercher le pseudonyme dans le texte de la réponse
-    │   (recherche exacte, case-sensitive)
-    │
-    ├── Si trouvé :
-    │   └── Remplacer par la valeur originale (déchiffrée)
-    │
-    └── Si non trouvé : continuer
+    ▼
+┌─────────────────────────────────���───────┐
+│ Passe 2 — SPB (Sub-PII Binding)        │
+│ Restauration des fragments              │
+│                                         │
+│ Pour chaque mapping de type             │
+│ décomposable (IP, CC, NSS) :            ���
+│   → Extraire les fragments structurels  │
+│     (octets IP, groupes CC, segments    │
+│      NSS)                               │
+│   → Remplacer les fragments du pseudo   │
+│     par les fragments de l'original     │
+│   → Avec gardes anti-faux-positifs      │
+│     (limites de mot, contexte)          │
+└─────────────────────────────────────────┘
     │
     ▼
 Réponse restaurée
 ```
+
+#### Pourquoi le SPB est nécessaire
+
+Quand le LLM reçoit un pseudonyme, il peut le décomposer dans sa réponse :
+
+```
+Requête  : "Écris cette IP en notation décimale : 10.0.84.12"
+                                                   ^^^^^^^^^^
+                                                   (pseudonyme de 172.16.254.3)
+
+Réponse  : "L'adresse 10.0.84.12 a pour octets : 10, 0, 84, 12.
+            Le premier octet 10 indique une classe A."
+
+Après passe 1 : "L'adresse 172.16.254.3 a pour octets : 10, 0, 84, 12.
+                 Le premier octet 10 indique une classe A."
+                                          ^^^^^^^^^^^^^^^^^^^
+                                          fragments du pseudo non restaurés !
+
+Après passe 2 : "L'adresse 172.16.254.3 a pour octets : 172, 16, 254, 3.
+(SPB)            Le premier octet 172 indique une classe B."
+                 ✓ Cohérent
+```
+
+#### Types décomposables supportés par le SPB
+
+| Type PII | Fragments | Exemple |
+|----------|-----------|---------|
+| `IpAddress` (v4) | Octets (séparateur `.`) | 10.0.84.12 → [10, 0, 84, 12] |
+| `CreditCard` | Groupes de 4 chiffres | 4832759104628371 → [4832, 7591, 0462, 8371] |
+| `NationalId` | Segments (séparateur espace) | 2 91 03 42 → [2, 91, 03, 42] |
+
+#### Gardes anti-faux-positifs
+
+- **Fragments ≥ 2 caractères** : remplacement avec limites de mot (`\b`)
+- **Fragments de 1 caractère** : remplacement uniquement en contexte analytique (après `=`, `:`, ou `,`)
+- **Dédoublonnage** : si un même fragment pseudo correspond à plusieurs originaux différents (ambiguïté), il n'est pas remplacé
 
 ### 7.3 Cas particuliers de dé-pseudonymisation
 
@@ -782,7 +855,8 @@ src-tauri/
 │   │   ├── mod.rs               Module pseudonymisation public
 │   │   ├── generator.rs         Génération de pseudonymes par type
 │   │   ├── replacer.rs          Remplacement dans le texte (gestion des offsets)
-│   │   ├── depseudonymizer.rs   Dé-pseudonymisation des réponses
+│   │   ├── depseudonymizer.rs   Dé-pseudonymisation des réponses (passe 1 + SPB)
+│   │   ├── fragment_restorer.rs Restauration des fragments (SPB — Sub-PII Binding)
 │   │   └── dictionaries.rs      Dictionnaires intégrés (noms, prénoms)
 │   │
 │   ├── mapping/
