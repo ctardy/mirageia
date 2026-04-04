@@ -47,10 +47,12 @@ impl StreamBuffer {
         // On peut flusher le début du buffer (garder la fin en réserve)
         let flush_up_to = self.buffer.len() - self.max_pseudonym_len;
 
-        // Trouver la coupure la plus sûre (fin de mot)
+        // Trouver la coupure la plus sûre (fin de mot), en respectant les frontières UTF-8
         let cut_point = self.buffer[..flush_up_to]
-            .rfind(char::is_whitespace)
-            .map(|pos| pos + 1)
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map(|(pos, c)| pos + c.len_utf8())
             .unwrap_or(flush_up_to);
 
         if cut_point == 0 {
