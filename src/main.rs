@@ -183,7 +183,7 @@ fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Erro
         }
 
         ModelAction::Download { name } => {
-            eprintln!("Downloading model '{}' from HuggingFace...", name);
+            eprintln!("Downloading model '{}'...", name);
             match model_manager::ensure_model(&name) {
                 Ok(path) => {
                     eprintln!("  ✓ Model downloaded: {:?}", path);
