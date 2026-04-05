@@ -341,6 +341,10 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             };
             let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
             let version = health["version"].as_str().unwrap_or("?");
+            let detection = match health["onnx_model"].as_str() {
+                Some(model) => format!("regex + ONNX ({})", model),
+                None => "regex only".to_string(),
+            };
             eprintln!("  ╔══════════════════════════════════════════╗");
             eprintln!("  ║  MirageIA Console                       ║");
             eprintln!("  ╚══════════════════════════════════════════╝");
@@ -348,6 +352,7 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  Version    : {}", version);
             eprintln!("  Proxy      : {}", addr);
             eprintln!("  Mode       : {}", mode);
+            eprintln!("  Detection  : {}", detection);
             eprintln!("  Mappings   : {}", mappings);
             eprintln!();
             eprintln!("  Waiting for requests... (Ctrl+C to quit)");

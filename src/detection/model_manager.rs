@@ -156,14 +156,116 @@ pub fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
         return Ok(dir.join("model.onnx"));
     }
 
-    // Download from HuggingFace
-    download_model(model_name)?;
+    // Try GitHub releases first (pre-exported ONNX bundle), then fall back to HuggingFace
+    let safe_name = model_name.replace('/', "__");
+    let github_url = format!(
+        "https://github.com/ctardy/mirageia/releases/download/models-v1/{}.tar.gz",
+        safe_name
+    );
+
+    match download_model_from_github(model_name, &github_url) {
+        Ok(()) => {
+            tracing::info!("Model '{}' downloaded from GitHub releases", model_name);
+        }
+        Err(e) => {
+            tracing::warn!(
+                "GitHub release download failed ({}), falling back to HuggingFace...",
+                e
+            );
+            download_model_from_huggingface(model_name)?;
+        }
+    }
 
     Ok(dir.join("model.onnx"))
 }
 
-/// Downloads a model from HuggingFace.
-fn download_model(model_name: &str) -> Result<(), String> {
+/// Downloads a pre-exported ONNX bundle (tar.gz) from GitHub releases.
+fn download_model_from_github(model_name: &str, url: &str) -> Result<(), String> {
+    use std::io::Read;
+
+    let dir = model_dir(model_name)?;
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create model directory: {}", e))?;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    tracing::info!("Downloading ONNX bundle from {}...", url);
+
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Failed to read response bytes: {}", e))?;
+
+    // Extract tar.gz — files are at the archive root (model.onnx, tokenizer.json, config.json)
+    let cursor = std::io::Cursor::new(&bytes[..]);
+    let gz = flate2::read::GzDecoder::new(cursor);
+    let mut archive = tar::Archive::new(gz);
+
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("Failed to read archive entries: {}", e))?
+    {
+        let mut entry = entry.map_err(|e| format!("Archive entry error: {}", e))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("Invalid path in archive: {}", e))?
+            .to_path_buf();
+
+        // Only extract known model files at the archive root
+        let filename = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if ["model.onnx", "tokenizer.json", "config.json"].contains(&n) => n.to_string(),
+            _ => continue,
+        };
+
+        let dest = dir.join(&filename);
+        let mut file = fs::File::create(&dest)
+            .map_err(|e| format!("Failed to create {}: {}", filename, e))?;
+
+        let mut buf = Vec::new();
+        entry
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("Failed to read {}: {}", filename, e))?;
+        file.write_all(&buf)
+            .map_err(|e| format!("Failed to write {}: {}", filename, e))?;
+
+        tracing::info!("  ✓ {} extracted ({} bytes)", filename, buf.len());
+    }
+
+    // Verify we got at least model.onnx
+    if !dir.join("model.onnx").exists() {
+        return Err("model.onnx not found in archive".to_string());
+    }
+
+    // Write metadata
+    let meta = ModelMeta {
+        model: model_name.to_string(),
+        version: "models-v1".to_string(),
+        sha256: String::new(),
+        downloaded_at: chrono::Local::now().to_rfc3339(),
+        source: url.to_string(),
+    };
+    let meta_json = serde_json::to_string_pretty(&meta)
+        .map_err(|e| format!("Failed to serialize meta.json: {}", e))?;
+    fs::write(dir.join("meta.json"), meta_json)
+        .map_err(|e| format!("Failed to write meta.json: {}", e))?;
+
+    Ok(())
+}
+
+/// Downloads model files individually from HuggingFace.
+fn download_model_from_huggingface(model_name: &str) -> Result<(), String> {
     let dir = model_dir(model_name)?;
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Création du répertoire modèle échouée : {}", e))?;

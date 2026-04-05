@@ -88,6 +88,8 @@ pub struct ProxyState {
     pub detector: RegexDetector,
     #[cfg(feature = "onnx")]
     pub onnx_detector: Option<Arc<PiiDetector>>,
+    /// Name of the loaded ONNX model, or None if regex-only mode.
+    pub onnx_model: Option<String>,
     pub mapping: Arc<MappingTable>,
     pub generator: Arc<Mutex<PseudonymGenerator>>,
     pub events_tx: broadcast::Sender<ProxyEvent>,
@@ -100,7 +102,9 @@ pub fn create_state(config: AppConfig) -> ProxyState {
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
 
     #[cfg(feature = "onnx")]
-    let onnx_detector = load_onnx_detector(&config);
+    let (onnx_detector, onnx_model) = load_onnx_detector(&config);
+    #[cfg(not(feature = "onnx"))]
+    let onnx_model: Option<String> = None;
 
     ProxyState {
         config,
@@ -108,6 +112,7 @@ pub fn create_state(config: AppConfig) -> ProxyState {
         detector: RegexDetector::new(),
         #[cfg(feature = "onnx")]
         onnx_detector,
+        onnx_model,
         mapping: Arc::new(MappingTable::new()),
         generator: Arc::new(Mutex::new(PseudonymGenerator::new())),
         events_tx,
@@ -118,21 +123,21 @@ pub fn create_state(config: AppConfig) -> ProxyState {
 /// Tente de charger le PiiDetector ONNX depuis le modèle configuré ou le modèle actif.
 /// Retourne None si aucun modèle n'est disponible ou si le chargement échoue (fail-open).
 #[cfg(feature = "onnx")]
-fn load_onnx_detector(config: &AppConfig) -> Option<Arc<PiiDetector>> {
+fn load_onnx_detector(config: &AppConfig) -> (Option<Arc<PiiDetector>>, Option<String>) {
     use crate::detection::model_manager;
 
-    // Priorité : config.model_name > modèle actif dans ~/.mirageia/active_model
-    let model_name = config.model_name.clone()
-        .or_else(|| model_manager::get_active_model())?;
+    let Some(model_name) = config.model_name.clone().or_else(model_manager::get_active_model) else {
+        return (None, None);
+    };
 
     match PiiDetector::from_model_name(&model_name) {
         Ok(detector) => {
             tracing::info!("Modèle ONNX '{}' chargé — détection contextuelle active", model_name);
-            Some(Arc::new(detector))
+            (Some(Arc::new(detector)), Some(model_name))
         }
         Err(e) => {
             tracing::warn!("Modèle ONNX '{}' non disponible : {} — détection regex seule", model_name, e);
-            None
+            (None, None)
         }
     }
 }
@@ -147,16 +152,20 @@ pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Er
     let state = Arc::new(create_state(config.clone()));
     let mut shutdown_rx = state.shutdown_tx.subscribe();
 
+    let onnx_info = state.onnx_model.as_deref()
+        .map(|m| format!(" | ONNX: {}", m))
+        .unwrap_or_else(|| " | ONNX: off (regex only)".to_string());
+
     let app = create_router(state);
 
     let listener = TcpListener::bind(&config.listen_addr).await?;
     if config.passthrough {
         tracing::info!(
-            "MirageIA proxy écoute sur {} (MODE PASSTHROUGH — pas de pseudonymisation)",
-            config.listen_addr
+            "MirageIA proxy écoute sur {} (MODE PASSTHROUGH — pas de pseudonymisation){}",
+            config.listen_addr, onnx_info
         );
     } else {
-        tracing::info!("MirageIA proxy écoute sur {}", config.listen_addr);
+        tracing::info!("MirageIA proxy écoute sur {}{}", config.listen_addr, onnx_info);
     }
 
     axum::serve(listener, app)
@@ -201,6 +210,7 @@ async fn proxy_handler(
             "version": env!("CARGO_PKG_VERSION"),
             "passthrough": state.config.passthrough,
             "pii_mappings": state.mapping.len(),
+            "onnx_model": state.onnx_model,
         });
         return Ok((StatusCode::OK, axum::Json(stats)).into_response());
     }
