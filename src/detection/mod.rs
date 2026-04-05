@@ -39,7 +39,9 @@ impl PiiDetector {
         label_map: Vec<String>,
     ) -> Result<Self, DetectionError> {
         let model = model::PiiModel::load(model_path)?;
+        tracing::info!("Chargement du tokenizer depuis {:?}", tokenizer_path);
         let tokenizer = PiiTokenizer::from_file(tokenizer_path)?;
+        tracing::info!("Tokenizer chargé");
 
         Ok(Self {
             model,
