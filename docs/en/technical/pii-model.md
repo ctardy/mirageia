@@ -64,14 +64,27 @@ generic patterns (email, IP, phone)
 
 **Critical rule**: API key patterns must be placed **before** generic patterns (phone, IP) in the list. Otherwise, the phone pattern can match digits contained within an API key (e.g., `0123456789` inside `sk-ant-api03-…0123456789AB`), register first, and the overlap filter then blocks detection of the entire key.
 
+### Layer 4 — ONNX Contextual Model (confidence 0.80–0.95)
+
+An embedded NER model detects entities that regex cannot reliably handle without context: person names, organizations, addresses.
+
+Model: `iiiorg/piiranha-v1-detect-personal-information` (337 MB ONNX INT8, ~946 MB RSS, multilingual including FR). See [ONNX integration reference](onnx-integration.md) for full details.
+
+ONNX entities are added only if they do not overlap with regex results. If the model is missing, MirageIA starts in regex-only mode (fail-open).
+
 ## Rust Implementation
 
 ```
 src/detection/
-├── mod.rs               — root module
+├── mod.rs               — PiiDetector struct (ONNX), load_label_map()
 ├── types.rs             — PiiEntity, PiiType
 ├── regex_detector.rs    — RegexDetector (patterns + validated_patterns)
-└── validator.rs         — iban_valid(), luhn_valid(), shannon_entropy()
+├── validator.rs         — iban_valid(), luhn_valid(), shannon_entropy()
+├── tokenizer.rs         — PiiTokenizer (HuggingFace tokenizers crate)
+├── model.rs             — PiiModel (ort Session, infer())
+├── model_manager.rs     — download/cache/verify, get_active_model()
+├── postprocess.rs       — logits_to_predictions(), extract_entities(), BIO merge
+└── error.rs             — DetectionError
 ```
 
 ### `RegexDetector::detect()` — algorithm
@@ -107,7 +120,7 @@ pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
 ## Tests
 
 ```bash
-# Run all tests (199 total)
+# Run all tests (206 unit + 25 e2e)
 docker run --rm -v /opt/projet/mirageia:/workspace -w /workspace rust:latest cargo test
 
 # Key PII detection tests
@@ -117,50 +130,6 @@ cargo test test_detect_credit_card
 cargo test test_detect_anthropic_key
 cargo test test_detect_secret_high_entropy
 ```
-
-## Next Phase: Embedded ONNX Model
-
-Regex detection covers fixed-pattern PII. For contextual detection (person names, organizations, addresses), the roadmap plans an embedded ONNX model.
-
-### Candidate Models
-
-| Model | Size | Capabilities | Latency |
-|-------|------|--------------|---------|
-| DistilBERT-PII | ~260 MB (INT8) | 33 PII types | 5–15ms |
-| AnonymizerSLM Qwen3 0.6B | ~400 MB (Q4) | Contextual (≠ "Thomas Edison") | 50–200ms |
-| Qwen3 1.7B | ~1.2 GB (Q4) | Maximum accuracy, multilingual | 100–500ms |
-
-### Planned Integration
-
-```
-[Raw text]
-     ↓
-[HuggingFace Tokenizer (tokenizers crate)]
-     ↓
-[ONNX Runtime (ort crate)]
-     ↓
-[Post-processing] → positions, types, confidence scores
-     ↓
-[PII entity list]
-```
-
-The `.onnx` model will be downloaded on first launch from GitHub Releases and cached in `~/.mirageia/models/`. The `onnx` feature flag is already present in `Cargo.toml`:
-
-```toml
-[features]
-default = []
-onnx = ["ort"]
-```
-
-### Target Benchmarks (ONNX)
-
-| Metric | Target |
-|--------|--------|
-| Precision (true positives) | > 90% |
-| Recall (no missed PII) | > 95% |
-| Latency per request | < 100ms |
-| Memory | < 800 MB |
-| Binary size (without model) | < 30 MB |
 
 ## References
 

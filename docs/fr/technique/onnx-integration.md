@@ -1,228 +1,172 @@
-# Intégration ONNX — Spécification d'implémentation
+# Intégration ONNX — Référence d'implémentation
 
-> **Statut** : À implémenter (phase suivante après v0.4.x)
-> **Prérequis** : régex + validation algorithmique stable (v0.4.3 ✅)
-> **Feature flag** : `--features onnx` (déjà déclaré dans `Cargo.toml`)
-
----
-
-## Objectif
-
-Compléter la détection regex (PII à format fixe) par une détection **contextuelle** via un modèle NER embarqué. Cible principale : noms de personnes, organisations, adresses — entités sans pattern prévisible.
-
-La détection regex conserve la **priorité** sur les PII à format fixe (IBAN, clés API, CB). ONNX complète ce que le regex ne peut pas voir.
+> **Statut** : Implémenté (v0.5.5+)
+> **Feature flag** : `--features onnx` (activé par défaut dans les builds CI release)
+> **Modèle** : `iiiorg/piiranha-v1-detect-personal-information` (pré-exporté ONNX, hébergé sur GitHub Releases)
 
 ---
 
-## Modèle recommandé
+## Vue d'ensemble
+
+MirageIA embarque un modèle NER contextuel via ONNX Runtime pour détecter les noms de personnes, organisations et adresses — des entités que le regex ne peut pas détecter de manière fiable sans contexte.
+
+Les deux couches sont complémentaires :
+- La **couche regex** gère les PII à format fixe (IBAN, clés API, emails, IPs, cartes bancaires) avec une priorité plus élevée
+- La **couche ONNX** ajoute les entités contextuelles qui ne chevauchent pas les résultats regex
+
+---
+
+## Modèle actif
 
 **[`iiiorg/piiranha-v1-detect-personal-information`](https://huggingface.co/iiiorg/piiranha-v1-detect-personal-information)**
 
 | Critère | Valeur |
 |---------|--------|
-| Taille | ~280 Mo (INT8 quantifié) |
-| Spécialisation | PII direct (pas NER générique) |
+| Taille sur disque | ~337 Mo (ONNX INT8 quantifié) |
+| Mémoire (RSS stable) | ~946 Mo |
+| Pic mémoire (chargement) | ~2,1 Go |
+| Spécialisation | Détection PII (pas NER générique) |
 | Langues | Multilingue dont FR |
-| Format | Export ONNX disponible sur HuggingFace |
-| Latence CPU | ~15ms / 500 tokens |
+| Latence CPU | ~15–30 ms / requête |
 
-Alternatives documentées :
-
-| Modèle | Taille | Points forts | Limite |
-|--------|--------|--------------|--------|
-| `dslim/bert-base-NER` | ~170 Mo | Léger, rapide | Labels génériques (PER/ORG/LOC), pas PII |
-| `lakshyakh93/deberta_finetuned_pii` | ~350 Mo | 12 types PII | Principalement EN |
-| `Qwen3 0.6B` | ~400 Mo (Q4) | Contextuel avancé | Plus lourd, latence 50–200ms |
+> **Note** : HuggingFace ne distribue ce modèle qu'en format SafeTensors. MirageIA héberge une version pré-exportée ONNX sur `github.com/ctardy/mirageia/releases/download/models-v1/`.
 
 ---
 
-## Architecture cible
-
-### Pipeline de détection
+## Pipeline de détection (implémenté)
 
 ```
 Texte brut
    ↓
-Tokenizer HuggingFace (WordPiece/BPE)
-   → token_ids + attention_mask + offsets caractères
+[Couche regex]  validated_patterns (IBAN/MOD-97, CB/Luhn) → confiance 0.95
+               + capture_validated_patterns (password + entropie)
+               + patterns (API keys en premier, puis email/IP/téléphone/NSS) → confiance 0.90
    ↓
-ONNX Runtime (crate ort)
-   → logits : [n_tokens × n_labels]
+[Couche ONNX]  tokenizers::Tokenizer (WordPiece/BPE, crate HuggingFace)
+               → token_ids + attention_mask + offsets caractères
+               ↓
+              ort::Session::run() → logits [n_tokens × n_labels]
+               ↓
+              argmax par token → labels BIO (B-PER, I-PER, B-ORG, O…)
+               → BIO merging → Vec<PiiEntity> avec positions caractères
    ↓
-Post-processing
-   → argmax par token → label BIO (B-PER, I-PER, B-ORG, O…)
-   → BIO merging : reconstituer les entités multi-tokens
-   → mapper offsets tokens → positions caractères (via encoding.get_offsets())
+[Fusion]       Entités ONNX ajoutées seulement sans chevauchement avec le regex
+               Entités de type Unknown ignorées
    ↓
-Vec<PiiEntity> — fusionné avec résultats regex (sans chevauchement)
+Vec<PiiEntity>  →  pipeline de pseudonymisation
 ```
 
-### Fusion regex + ONNX
+### Implémentation de la fusion (`server.rs`)
 
 ```rust
-pub fn detect_all(text: &str) -> Vec<PiiEntity> {
-    // Regex toujours actif (PII à format fixe, prioritaire)
-    let mut entities = regex_detector.detect(text);
-
-    #[cfg(feature = "onnx")]
-    {
-        let onnx_entities = onnx_detector.detect(text);
-        for e in onnx_entities {
-            // Ne pas écraser ce que le regex a déjà détecté
-            let overlaps = entities.iter().any(|r| r.start < e.end && r.end > e.start);
-            if !overlaps {
-                entities.push(e);
+let entities = state.detector.detect_with_whitelist(&field.text, &state.config.whitelist);
+#[cfg(feature = "onnx")]
+let entities = {
+    let mut combined = entities;
+    if let Some(onnx) = &state.onnx_detector {
+        if let Ok(onnx_entities) = onnx.detect(&field.text) {
+            for onnx_entity in onnx_entities {
+                if onnx_entity.entity_type == PiiType::Unknown { continue; }
+                let overlaps = combined.iter().any(|e|
+                    onnx_entity.start < e.end && onnx_entity.end > e.start
+                );
+                if !overlaps { combined.push(onnx_entity); }
             }
         }
     }
-
-    entities.sort_by_key(|e| e.start);
-    entities
-}
+    combined
+};
 ```
 
-**Dégradation gracieuse** : si le feature `onnx` n'est pas compilé ou si le modèle est absent, MirageIA démarre en mode regex seul — pas de crash.
+**Dégradation gracieuse** : si le modèle est absent ou échoue au chargement, MirageIA démarre en mode regex seul — pas de crash.
 
 ---
 
-## Structure des fichiers Rust à créer
+## Structure des sources Rust
 
 ```
 src/detection/
-├── mod.rs                  — exposer OnnxDetector si feature onnx
-├── onnx_detector.rs        — (NOUVEAU) inférence + BIO merge
-└── model_manager.rs        — (NOUVEAU) download + cache + vérification hash
+├── mod.rs               — struct PiiDetector (model + tokenizer + label_map)
+│                           from_model_name(), detect(), load_label_map()
+├── types.rs             — PiiEntity, PiiType
+├── regex_detector.rs    — RegexDetector (validated_patterns + patterns)
+├── validator.rs         — iban_valid(), luhn_valid(), shannon_entropy()
+├── tokenizer.rs         — PiiTokenizer (wrapper crate tokenizers HuggingFace)
+├── model.rs             — PiiModel (ort Session, infer())
+└── model_manager.rs     — download/cache/vérification, get_active_model(), set_active_model()
 ```
 
-### `onnx_detector.rs`
+### Types clés
 
 ```rust
-#[cfg(feature = "onnx")]
-pub struct OnnxDetector {
-    session: ort::Session,
-    tokenizer: tokenizers::Tokenizer,
+pub struct PiiDetector {
+    model: PiiModel,                      // ort::Session wrappé dans Mutex<>
+    tokenizer: PiiTokenizer,              // tokenizers::Tokenizer
+    label_map: Vec<String>,               // ex. ["O", "B-PER", "I-PER", …]
+    thresholds: HashMap<PiiType, f32>,
+    overlap_chars: usize,                 // chevauchement segmentation texte (200 chars)
 }
 
-#[cfg(feature = "onnx")]
-impl OnnxDetector {
-    pub fn load(model_dir: &Path) -> Result<Self> {
-        let session = ort::Session::builder()?
-            .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
-            .commit_from_file(model_dir.join("model.onnx"))?;
-
-        let tokenizer = tokenizers::Tokenizer::from_file(
-            model_dir.join("tokenizer.json")
-        )?;
-
-        Ok(Self { session, tokenizer })
-    }
-
-    pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
-        // 1. Tokeniser avec offsets
-        let encoding = self.tokenizer.encode(text, false)?;
-        let offsets = encoding.get_offsets(); // [(char_start, char_end), …]
-
-        // 2. Inférence
-        let logits = self.session.run(inputs![
-            encoding.get_ids(),
-            encoding.get_attention_mask()
-        ])?;
-
-        // 3. Argmax + BIO merging + conversion offsets → PiiEntity
-        bio_merge(logits, offsets, text)
-    }
+pub struct PiiModel {
+    session: std::sync::Mutex<ort::session::Session>,
+    // Mutex requis : ort 2.0-rc.12 Session::run() prend &mut self
 }
 ```
 
-### `model_manager.rs`
+### Spécificités de l'API ort 2.0.0-rc.12
 
 ```rust
-pub struct ModelMeta {
-    pub model: String,
-    pub version: String,
-    pub sha256: String,
-    pub downloaded_at: DateTime<Utc>,
-    pub source: String,
-}
+// Création de session
+let session = ort::session::Session::builder()
+    .map_err(|e| ...)?
+    .commit_from_file(model_path)
+    .map_err(|e| ...)?;
 
-pub fn ensure_model(config: &Config) -> Result<PathBuf> {
-    let model_dir = config.model_cache_dir
-        .join(&config.model_name);
-    let model_path = model_dir.join("model.onnx");
-    let meta_path = model_dir.join("model.json");
-
-    if model_path.exists() && meta_valid(&meta_path, &model_path) {
-        return Ok(model_dir);
-    }
-
-    // Télécharger depuis HuggingFace
-    println!("  → Téléchargement du modèle {} (~280 Mo)…", config.model_name);
-    download_hf_model(&config.model_name, &model_dir)?;
-    write_meta(&meta_path, &config.model_name)?;
-
-    Ok(model_dir)
-}
-
-fn meta_valid(meta_path: &Path, model_path: &Path) -> bool {
-    // Vérifier que le hash SHA-256 du .onnx correspond à model.json
-    // + vérification hebdomadaire optionnelle contre l'API HuggingFace
-    …
-}
+// Inférence
+let ids_tensor = ort::value::Tensor::<i64>::from_array(input_ids_ndarray)?;
+let mask_tensor = ort::value::Tensor::<i64>::from_array(attention_mask_ndarray)?;
+let outputs = session.run(ort::inputs![
+    "input_ids" => ids_tensor,
+    "attention_mask" => mask_tensor
+])?;
+let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+// shape: &[i64], data: &[f32] — index: data[token_idx * num_labels + label_idx]
 ```
 
----
-
-## Cache et gestion des modèles
-
-### Structure sur disque
-
-```
-~/.mirageia/
-└── models/
-    ├── piiranha-v1/
-    │   ├── model.onnx          (~280 Mo)
-    │   ├── tokenizer.json      (vocab + règles BPE)
-    │   └── model.json          (hash SHA-256 + version + source + date)
-    └── bert-base-NER/          (modèle alternatif, peut coexister)
-        ├── model.onnx
-        ├── tokenizer.json
-        └── model.json
-```
-
-### Format `model.json`
-
-```json
-{
-  "model": "iiiorg/piiranha-v1-detect-personal-information",
-  "version": "1.0",
-  "sha256": "a3f9c2…",
-  "downloaded_at": "2026-04-04T22:00:00Z",
-  "source": "https://huggingface.co/iiiorg/piiranha-v1-detect-personal-information/resolve/main/model.onnx"
-}
-```
-
-### Configuration (`~/.mirageia/config.toml`)
-
-```toml
-[detection]
-model = "iiiorg/piiranha-v1-detect-personal-information"  # défaut
-model_cache_dir = "~/.mirageia/models"
-check_updates = "weekly"   # never | startup | daily | weekly
-confidence_threshold = 0.85
-```
+Dépendances : `ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }`, `ndarray = "0.17"` (doit correspondre à la version interne d'ort).
 
 ---
 
 ## CLI de gestion des modèles
 
 ```bash
-mirageia model list                        # liste les modèles en cache + actif
-mirageia model download <hf-repo>          # télécharger sans activer
-mirageia model use <nom>                   # changer le modèle actif
-mirageia model update                      # vérifier et appliquer les mises à jour
+mirageia model list                        # liste les modèles en cache, marque l'actif
+mirageia model download <hf-repo>          # téléchargement depuis GitHub Releases (puis HF en fallback)
+mirageia model use <nom>                   # définir le modèle actif (écrit ~/.mirageia/active_model)
 mirageia model delete <nom>                # supprimer du cache
-mirageia model verify                      # vérifier le hash SHA-256 du modèle actif
+mirageia model verify                      # vérification intégrité SHA-256
 ```
+
+### Structure sur disque
+
+```
+~/.mirageia/
+├── active_model          — une ligne : nom du modèle (ex. iiiorg/piiranha-v1-detect-personal-information)
+└── models/
+    └── iiiorg__piiranha-v1-detect-personal-information/
+        ├── model.onnx        (~337 Mo)
+        ├── tokenizer.json    (~16 Mo — vocab + règles BPE)
+        ├── config.json       (map id2label)
+        └── meta.json         (URL source, downloaded_at, version)
+```
+
+Nommage des répertoires : `/` → `__` (ex. `iiiorg/piiranha-v1-detect-personal-information` → `iiiorg__piiranha-v1-detect-personal-information`).
+
+### Stratégie de téléchargement
+
+`ensure_model()` essaie dans l'ordre :
+1. **GitHub Releases** — `https://github.com/ctardy/mirageia/releases/download/models-v1/{safe_name}.tar.gz` (bundle ONNX pré-exporté, sans Python/optimum requis)
+2. **Fallback HuggingFace** — téléchargement fichier par fichier si l'asset GitHub n'est pas disponible
 
 ---
 
@@ -230,57 +174,104 @@ mirageia model verify                      # vérifier le hash SHA-256 du modèl
 
 | Situation | Comportement |
 |-----------|-------------|
-| Premier lancement | Télécharge le modèle par défaut, affiche la progression |
-| Lancements suivants | Charge depuis le cache, démarrage instantané |
-| Modèle corrompu (hash invalide) | Re-télécharge automatiquement |
-| Mise à jour disponible | Notifie, **ne met pas à jour sans confirmation** |
-| Changement de modèle | `mirageia model use <nom>` ou éditer `config.toml` |
-| Pas de réseau + cache absent | Démarre en **mode regex seul** (pas de crash) |
-| Pas de réseau + cache présent | Utilise le cache existant normalement |
+| `active_model` défini, fichiers modèle présents | Charge le détecteur ONNX, log "détection contextuelle active" |
+| `active_model` défini, fichiers manquants | Log warn, démarre en mode regex seul (fail-open) |
+| Pas de fichier `active_model` | Démarre en mode regex seul |
+| Erreur d'inférence | Log error, la requête concernée utilise uniquement le regex |
 
-**Principe** : les mises à jour de modèle ne sont **jamais silencieuses** — un modèle qui change peut modifier le comportement de détection en production.
+Le nom du modèle actif est exposé dans :
+- `GET /health` → `"onnx_model": "iiiorg/piiranha-v1-detect-personal-information"` (ou `null`)
+- `mirageia console` → `Detection  : regex + ONNX (iiiorg/piiranha-v1-detect-personal-information)`
 
 ---
 
-## Points d'attention implémentation
+## Activation du modèle ONNX
+
+### Déploiement serveur/Docker
+
+```bash
+# 1. Télécharger le modèle (dans le container en cours d'exécution)
+docker exec mirageia mirageia model download iiiorg/piiranha-v1-detect-personal-information
+
+# 2. Le définir comme actif
+docker exec mirageia mirageia model use iiiorg/piiranha-v1-detect-personal-information
+
+# 3. Rebuilder l'image Docker (l'entrypoint est COPY lors du build)
+cd /opt/docker/mirageia
+docker compose build
+docker compose up -d
+```
+
+> Le modèle est persisté dans le volume `./home/.mirageia` et survit aux redémarrages du container.
+
+### Installation locale
+
+```bash
+mirageia model download iiiorg/piiranha-v1-detect-personal-information
+mirageia model use iiiorg/piiranha-v1-detect-personal-information
+mirageia  # redémarrer le proxy
+```
+
+---
+
+## Besoins en mémoire
+
+| Mode | RSS | VmPeak (chargement) |
+|------|-----|---------------------|
+| Regex seul | ~10 Mo | ~10 Mo |
+| ONNX actif | ~946 Mo | ~2,1 Go |
+
+Pour les déploiements Docker avec ONNX activé, définir la limite mémoire à **au moins 3 Go** :
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 3G
+```
+
+---
+
+## Notes d'implémentation
+
+### Segmentation du texte
+
+Les textes longs sont découpés en segments chevauchants (chevauchement 200 caractères) pour éviter de tronquer des entités aux frontières de segment. Les résultats de tous les segments sont fusionnés avec déduplication.
 
 ### Mapping token → caractère
-Point le plus délicat. Un tokenizer BPE/WordPiece fragmente les mots :
-- `"Dupont"` → `["Du", "##pont"]`
-- `"jean.dupont@acme.fr"` → plusieurs tokens
 
-La crate `tokenizers` retourne `encoding.get_offsets()` : tableau de `(char_start, char_end)` par token. Utiliser ces offsets pour reconstruire les `PiiEntity { start, end }` corrects dans le texte original.
+La crate `tokenizers` retourne `encoding.get_offsets()` : `(char_start, char_end)` par token. Ces offsets sont utilisés pour reconstruire les positions correctes `PiiEntity { start, end }` dans le texte original.
 
 ### BIO merging
-Les labels NER suivent le schéma BIO :
-- `B-PER` = début d'une entité personne
-- `I-PER` = continuation
-- `O` = hors entité
+
+Les labels suivent le schéma BIO. Les tokens `I-*` adjacents avec le même type que le `B-*` précédent sont fusionnés en une seule entité couvrant leur plage de caractères combinée.
 
 ```
 Token:  "Jean"  "Du"   "##pont"  "travaille"
 Label:  B-PER   I-PER  I-PER     O
-→ entité : "Jean Dupont" (positions fusionnées)
+→ entité : "Jean Dupont" (fusionnée, positions caractères depuis offsets)
 ```
 
-### Seuil de confiance
-Appliquer un seuil sur le score softmax avant de valider une entité. Valeur recommandée : 0.85. Configurable par l'utilisateur pour ajuster le ratio précision/rappel.
+### Faux positifs
 
-### Faux positifs contextuels
-Exemples attendus :
-- `"Thomas Edison a inventé l'ampoule"` → détecté comme PER malgré le contexte historique
-- `"Le champ `username` contient…"` → `username` potentiellement détecté
-
-Mitigation : whitelist utilisateur dans `config.toml` + seuil de confiance élevé.
+Cas attendus : personnages historiques ("Thomas Edison"), noms de variables génériques. Atténués par la whitelist dans `config.toml` et le chevauchement d'entités avec les résultats regex.
 
 ---
 
-## Ordre d'implémentation suggéré
+## Ajouter un nouveau modèle
 
-1. `model_manager.rs` — download HuggingFace + cache + hash SHA-256
-2. `onnx_detector.rs` — tokenize + inférence + BIO merge basique
-3. Brancher dans `detect_all()` derrière `#[cfg(feature = "onnx")]`
-4. Tests : comparer rappel regex seul vs regex + ONNX sur corpus PII FR/EN
-5. CLI `mirageia model` (list, use, update, delete)
-6. Config `~/.mirageia/config.toml`
-7. Release `v0.5.0` avec `--features onnx` activé par défaut dans le CI
+Tout modèle HuggingFace de classification de tokens compatible ONNX Runtime peut être utilisé :
+
+```bash
+# Exporter en ONNX (nécessite optimum)
+pip install optimum[onnxruntime]
+optimum-cli export onnx \
+  --model <hf-repo> \
+  --task token-classification \
+  ~/.mirageia/models/<safe_name>/
+
+# Activer
+mirageia model use <hf-repo>
+```
+
+Pour distribuer des bundles ONNX pré-exportés, créer une release GitHub avec un asset `{safe_name}.tar.gz` contenant `model.onnx`, `tokenizer.json`, `config.json` à la racine de l'archive.

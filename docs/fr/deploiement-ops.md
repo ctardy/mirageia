@@ -112,12 +112,42 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1G        # minimum 1G — Claude Code avec agents parallèles ~500MB
+          memory: 3G        # 3G requis si le modèle ONNX est actif (VmPeak ~2,1 Go pendant le chargement)
         reservations:
           memory: 256M
 ```
 
-> **Attention mémoire** : la limite mémoire doit être d'au moins **1 GB**. Claude Code avec agents parallèles consomme ~500 MB. Une limite à 256 MB provoque des OOM kills silencieux (`Killed`).
+> **Attention mémoire** : la limite mémoire doit être d'au moins **3 Go** si le modèle ONNX est actif. Le modèle atteint ~2,1 Go en VmPeak lors du chargement et se stabilise à ~946 Mo RSS. Sans ONNX (mode regex seul), 1 Go suffit.
+
+### Activation du modèle ONNX
+
+Le modèle ONNX est téléchargé une seule fois et persisté dans le volume `./home/.mirageia`. Il survit aux redémarrages du container.
+
+```bash
+# 1. Télécharger le modèle (une fois, dans le container en cours d'exécution)
+docker exec mirageia mirageia model download iiiorg/piiranha-v1-detect-personal-information
+
+# 2. Le définir comme actif
+docker exec mirageia mirageia model use iiiorg/piiranha-v1-detect-personal-information
+
+# 3. Rebuilder l'image (l'entrypoint est COPY lors du build — rebuild obligatoire)
+cd /opt/docker/mirageia
+docker compose build
+docker compose up -d
+```
+
+> **Important** : `docker/entrypoint.sh` est intégré dans l'image via `COPY docker/entrypoint.sh /entrypoint.sh`. Modifier le fichier sur disque n'a **aucun effet** sans `docker compose build`.
+
+Pour vérifier que l'ONNX est actif :
+```bash
+curl -s http://localhost:3100/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('onnx_model','inactif'))"
+# → iiiorg/piiranha-v1-detect-personal-information
+```
+
+Le log de démarrage affichera :
+```
+✓ Modèle ONNX actif — détection contextuelle activée
+```
 
 ### Lancer le container
 
@@ -129,7 +159,7 @@ docker run -d \
   -p 127.0.0.1:3100:3100 \
   -p 127.0.0.1:7681:7681 \
   -e ANTHROPIC_API_KEY=sk-ant-XXXXXXXXX \
-  --memory=1g \
+  --memory=3g \
   mirageia
 
 # Vérifier que ça tourne
@@ -139,8 +169,9 @@ curl http://127.0.0.1:3100/health
 
 Réponse attendue du health check :
 ```json
-{"status": "ok", "passthrough": false, "pii_mappings": 0, "version": "0.4.3"}
+{"status": "ok", "passthrough": false, "pii_mappings": 0, "version": "0.5.9", "onnx_model": "iiiorg/piiranha-v1-detect-personal-information"}
 ```
+(`"onnx_model"` vaut `null` en mode regex seul.)
 
 ### Terminal web (ttyd)
 
@@ -470,8 +501,13 @@ SetEnv proxy-nokeepalive 1
 
 ### Performance
 
-- MirageIA consomme ~10 Mo de RAM au repos
-- La pseudonymisation ajoute ~1-5 ms de latence par requête
+| Mode | RAM au repos | Pic au démarrage |
+|------|-------------|------------------|
+| Regex seul | ~10 Mo | ~10 Mo |
+| ONNX actif | ~946 Mo | ~2,1 Go |
+
+- La pseudonymisation ajoute ~1–5 ms de latence par requête (couche regex)
+- L'ONNX ajoute ~15–30 ms par requête
 - Le container n'a pas besoin de GPU
 
 ---
@@ -511,8 +547,13 @@ docker stop mirageia && docker rm mirageia
 
 | Version | Date | Changements |
 |---------|------|-------------|
+| v0.5.9 | 05/04/2026 | Nettoyage logs debug tokenizer. Image Docker à jour, ONNX actif en production. |
+| v0.5.8 | 05/04/2026 | Fix entrypoint timeout 30s→120s. Limite RAM 1G→3G (ONNX : 946 Mo RSS + 2,1 Go VmPeak). Rebuild image Docker requis. |
+| v0.5.7 | 05/04/2026 | Fix chemin modèle ONNX (`/` → `__` dans check_model_files). Fix health check entrypoint (boucle retry 30s). |
+| v0.5.6 | 05/04/2026 | Auto-download modèle ONNX depuis GitHub Releases (tar.gz) avec fallback HuggingFace. Affichage modèle dans /health + console. |
+| v0.5.5 | 05/04/2026 | Intégration ONNX (PiiDetector) dans le pipeline proxy — noms, dates, adresses via NER contextuel. Compilé avec `--features onnx`. Fail-open si modèle absent. |
+| v0.5.0 | 04/04/2026 | Extraction texte depuis PDF (lopdf) et DOCX (zip+XML) avant pseudonymisation ; model manager CLI (`mirageia model list/download/use/delete/verify`) |
 | v0.4.3 | 04/04/2026 | Fix faux positif PHONE_NUMBER sur les chiffres d'une clé API (réordonnancement des patterns : API keys avant téléphone) |
 | v0.4.2 | 04/04/2026 | Ajout validateurs IBAN (MOD-97), Luhn (CB), entropie de Shannon + patterns secrets (GitHub, AWS, Stripe, Anthropic, OpenAI, JWT, Slack) |
 | v0.4.1 | 04/04/2026 | Fix panic UTF-8 dans StreamBuffer (`rfind` → `char_indices().rev()`) ; fix champs SSE enrichis absents de la release v0.4.0 |
 | v0.4.0 | 2026 | Version initiale déployée |
-| v0.5.0 | 2026-04-04 | Extraction texte depuis PDF (lopdf) et DOCX (zip+XML) avant pseudonymisation ; model manager CLI (`mirageia model list/download/use/delete/verify`) |

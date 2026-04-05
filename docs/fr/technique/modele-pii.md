@@ -64,14 +64,27 @@ patterns génériques (email, IP, téléphone)
 
 **Règle critique** : les patterns API keys doivent impérativement se trouver **avant** les patterns génériques (téléphone, IP) dans la liste. Sinon, le pattern téléphone peut matcher des chiffres contenus dans une clé API (`0123456789` dans `sk-ant-api03-…0123456789AB`), s'enregistrer en premier, et le filtre de chevauchement bloque ensuite la détection de la clé entière.
 
+### Couche 4 — Modèle ONNX contextuel (confiance 0,80–0,95)
+
+Un modèle NER embarqué détecte les entités que le regex ne peut pas gérer de manière fiable sans contexte : noms de personnes, organisations, adresses.
+
+Modèle : `iiiorg/piiranha-v1-detect-personal-information` (337 Mo ONNX INT8, ~946 Mo RSS, multilingue dont FR). Voir [référence intégration ONNX](onnx-integration.md) pour les détails complets.
+
+Les entités ONNX sont ajoutées uniquement si elles ne chevauchent pas les résultats regex. Si le modèle est absent, MirageIA démarre en mode regex seul (fail-open).
+
 ## Implémentation Rust
 
 ```
 src/detection/
-├── mod.rs               — module racine
+├── mod.rs               — struct PiiDetector (ONNX), load_label_map()
 ├── types.rs             — PiiEntity, PiiType
 ├── regex_detector.rs    — RegexDetector (patterns + validated_patterns)
-└── validator.rs         — iban_valid(), luhn_valid(), shannon_entropy()
+├── validator.rs         — iban_valid(), luhn_valid(), shannon_entropy()
+├── tokenizer.rs         — PiiTokenizer (crate tokenizers HuggingFace)
+├── model.rs             — PiiModel (ort Session, infer())
+├── model_manager.rs     — download/cache/vérification, get_active_model()
+├── postprocess.rs       — logits_to_predictions(), extract_entities(), BIO merge
+└── error.rs             — DetectionError
 ```
 
 ### `RegexDetector::detect()` — algorithme
@@ -107,7 +120,7 @@ pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
 ## Tests
 
 ```bash
-# Lancer tous les tests (199 au total)
+# Lancer tous les tests (206 unitaires + 25 e2e)
 docker run --rm -v /opt/projet/mirageia:/workspace -w /workspace rust:latest cargo test
 
 # Tests clés détection PII
@@ -117,50 +130,6 @@ cargo test test_detect_credit_card
 cargo test test_detect_anthropic_key
 cargo test test_detect_secret_high_entropy
 ```
-
-## Phase suivante : modèle ONNX embarqué
-
-La détection par regex couvre les PII à pattern fixe. Pour la détection contextuelle (noms de personnes, organisations, adresses), la feuille de route prévoit un modèle ONNX embarqué.
-
-### Modèles candidats
-
-| Modèle | Taille | Capacités | Latence |
-|--------|--------|-----------|---------|
-| DistilBERT-PII | ~260 Mo (INT8) | 33 types PII | 5–15ms |
-| AnonymizerSLM Qwen3 0.6B | ~400 Mo (Q4) | Contextuel (≠ "Thomas Edison") | 50–200ms |
-| Qwen3 1.7B | ~1.2 Go (Q4) | Précision maximale, multilingue | 100–500ms |
-
-### Intégration prévue
-
-```
-[Texte brut]
-     ↓
-[Tokenizer HuggingFace (crate tokenizers)]
-     ↓
-[ONNX Runtime (crate ort)]
-     ↓
-[Post-processing] → positions, types, scores de confiance
-     ↓
-[Liste d'entités PII]
-```
-
-Le modèle `.onnx` sera téléchargé au premier lancement depuis GitHub Releases et mis en cache dans `~/.mirageia/models/`. Le feature flag `onnx` est déjà présent dans `Cargo.toml` :
-
-```toml
-[features]
-default = []
-onnx = ["ort"]
-```
-
-### Benchmarks cibles (ONNX)
-
-| Métrique | Objectif |
-|----------|----------|
-| Précision (vrais positifs) | > 90% |
-| Rappel (PII non manquées) | > 95% |
-| Latence par requête | < 100ms |
-| Mémoire | < 800 Mo |
-| Taille binaire (sans modèle) | < 30 Mo |
 
 ## Références
 
