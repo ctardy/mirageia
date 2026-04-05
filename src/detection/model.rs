@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(feature = "onnx")]
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::detection::error::DetectionError;
 
