@@ -46,12 +46,21 @@ echo ""
 # Lancer MirageIA en arrière-plan
 echo "  → Démarrage du proxy MirageIA..."
 mirageia &
-sleep 1
 
-if curl -sf http://localhost:3100/health > /dev/null 2>&1; then
+# Wait up to 30s for the proxy to start (ONNX model loading can take several seconds)
+READY=0
+for i in $(seq 1 30); do
+    sleep 1
+    if curl -sf http://localhost:3100/health > /dev/null 2>&1; then
+        READY=1
+        break
+    fi
+done
+
+if [ "$READY" = "1" ]; then
     echo "  ✓ Proxy actif sur http://localhost:3100"
 else
-    echo "  ✗ Le proxy n'a pas démarré"
+    echo "  ✗ Le proxy n'a pas démarré (timeout 30s)"
     exit 1
 fi
 
