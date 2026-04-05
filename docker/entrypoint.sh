@@ -20,14 +20,18 @@ curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-
 echo "  ✓ MirageIA $(mirageia --version)"
 echo "  ✓ Claude Code $(claude --version 2>&1 | head -1)"
 
-# Télécharger le modèle ONNX si non déjà en cache (persisté dans /root/.mirageia/models/)
+# Charger le modèle ONNX PII si déjà en cache (persisté dans /root/.mirageia/models/)
+# Le modèle doit être préparé manuellement (export ONNX depuis HuggingFace avec Optimum)
+# → cd /tmp && pip install optimum && optimum-cli export onnx --model iiiorg/piiranha-v1-detect-personal-information --task token-classification piiranha_onnx/
+# → mv piiranha_onnx/model.onnx piiranha_onnx/tokenizer.json piiranha_onnx/config.json ~/.mirageia/models/iiiorg__piiranha-v1-detect-personal-information/
+# → mirageia model use iiiorg/piiranha-v1-detect-personal-information
 ONNX_MODEL="iiiorg/piiranha-v1-detect-personal-information"
-echo "  → Vérification du modèle ONNX PII..."
-if mirageia model download "$ONNX_MODEL"; then
+ONNX_MODEL_DIR="/root/.mirageia/models/$(echo "$ONNX_MODEL" | sed 's|/|__|g')"
+if [ -f "$ONNX_MODEL_DIR/model.onnx" ]; then
     mirageia model use "$ONNX_MODEL"
     echo "  ✓ Modèle ONNX actif — détection contextuelle activée"
 else
-    echo "  ⚠ Modèle ONNX non disponible — détection regex seule"
+    echo "  ℹ  Modèle ONNX absent — détection regex seule (placez les fichiers ONNX dans $ONNX_MODEL_DIR)"
 fi
 
 # Clé API : optionnelle (on peut se connecter via 'claude login' à l'intérieur)
