@@ -17,7 +17,7 @@ impl UpstreamClient {
         Self { client }
     }
 
-    /// Envoie une requête à l'upstream et retourne la réponse brute (pour streaming ou non).
+    /// Sends a request to the upstream and returns the raw response (for streaming or not).
     pub async fn forward(
         &self,
         method: http::Method,

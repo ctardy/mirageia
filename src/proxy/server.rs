@@ -23,7 +23,7 @@ use super::client::UpstreamClient;
 use super::error::ProxyError;
 use super::router;
 
-/// Direction d'un événement proxy (requête ou réponse).
+/// Direction of a proxy event (request or response).
 #[derive(Debug, Clone)]
 pub enum Direction {
     Request,
@@ -39,7 +39,7 @@ impl std::fmt::Display for Direction {
     }
 }
 
-/// Événement émis par le proxy pour la console de monitoring.
+/// Event emitted by the proxy for the monitoring console.
 #[derive(Debug, Clone)]
 pub struct ProxyEvent {
     pub timestamp: chrono::DateTime<chrono::Local>,
@@ -73,7 +73,7 @@ impl std::fmt::Display for ProxyEvent {
     }
 }
 
-/// Extrait le nom du modèle depuis le body JSON d'une requête LLM.
+/// Extracts the model name from the JSON body of an LLM request.
 fn extract_model_from_body(body_bytes: &[u8]) -> Option<String> {
     serde_json::from_slice::<serde_json::Value>(body_bytes)
         .ok()
@@ -90,7 +90,7 @@ pub struct ProxyState {
     pub shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
-/// Crée un ProxyState à partir d'une config (pour les tests).
+/// Creates a ProxyState from a config (for tests).
 pub fn create_state(config: AppConfig) -> ProxyState {
     let (events_tx, _) = broadcast::channel(256);
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
@@ -105,12 +105,12 @@ pub fn create_state(config: AppConfig) -> ProxyState {
     }
 }
 
-/// Retourne le handler comme fallback pour un Router axum (pour les tests).
+/// Returns the handler as a fallback for an axum Router (for tests).
 pub fn create_router(state: Arc<ProxyState>) -> Router {
     Router::new().fallback(proxy_handler).with_state(state)
 }
 
-/// Démarre le proxy HTTP sur l'adresse configurée.
+/// Starts the HTTP proxy on the configured address.
 pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(create_state(config.clone()));
     let mut shutdown_rx = state.shutdown_tx.subscribe();
@@ -137,7 +137,7 @@ pub async fn start_proxy(config: AppConfig) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// Headers à copier de la requête entrante vers l'upstream.
+/// Headers to copy from the incoming request to the upstream.
 const FORWARDED_HEADERS: &[&str] = &[
     "content-type",
     "x-api-key",
@@ -148,14 +148,14 @@ const FORWARDED_HEADERS: &[&str] = &[
     "user-agent",
 ];
 
-/// Handler catch-all : reçoit toute requête, la route vers le bon provider, relaye la réponse.
+/// Catch-all handler: receives any request, routes it to the correct provider, relays the response.
 async fn proxy_handler(
     State(state): State<Arc<ProxyState>>,
     request: Request<Body>,
 ) -> Result<Response, ProxyError> {
     let path = request.uri().path().to_string();
 
-    // Arrêt gracieux du proxy
+    // Graceful proxy shutdown
     if path == "/shutdown" && request.method() == http::Method::POST {
         tracing::info!("Arrêt du proxy demandé via /shutdown");
         let _ = state.shutdown_tx.send(true);
@@ -173,7 +173,7 @@ async fn proxy_handler(
         return Ok((StatusCode::OK, axum::Json(stats)).into_response());
     }
 
-    // Endpoint SSE pour la console de monitoring
+    // SSE endpoint for the monitoring console
     if path == "/events" {
         let mut rx = state.events_tx.subscribe();
         let stream = async_stream::stream! {
@@ -212,7 +212,7 @@ async fn proxy_handler(
             .map_err(|e| ProxyError::Http(e.to_string()));
     }
 
-    // Dashboard web
+    // Web dashboard
     if path == "/dashboard" {
         return Response::builder()
             .status(200)
@@ -221,13 +221,13 @@ async fn proxy_handler(
             .map_err(|e| ProxyError::Http(e.to_string()));
     }
 
-    // Résoudre le provider
+    // Resolve the provider
     let provider = router::resolve_provider(&path)
         .ok_or_else(|| ProxyError::UnknownProvider(path.clone()))?;
 
     let upstream_url = router::upstream_url(provider, &path, &state.config);
 
-    // Copier les headers pertinents
+    // Copy relevant headers
     let mut upstream_headers = http::HeaderMap::new();
     for &name in FORWARDED_HEADERS {
         if let Some(value) = request.headers().get(name) {
@@ -237,7 +237,7 @@ async fn proxy_handler(
         }
     }
 
-    // Lire le body
+    // Read the body
     let method = request.method().clone();
     let body_bytes = axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024)
         .await
@@ -246,7 +246,7 @@ async fn proxy_handler(
     let model = extract_model_from_body(&body_bytes);
     let request_body_size = body_bytes.len();
 
-    // --- MODE PASSTHROUGH : relayer sans pseudonymiser ---
+    // --- PASSTHROUGH MODE: relay without pseudonymization ---
     if state.config.passthrough {
         tracing::debug!(
             provider = ?provider,
@@ -301,7 +301,7 @@ async fn proxy_handler(
         return build_passthrough_response(upstream_response).await;
     }
 
-    // --- PSEUDONYMISATION DE LA REQUÊTE (fail-open) ---
+    // --- REQUEST PSEUDONYMIZATION (fail-open) ---
     let pseudo_result = match pseudonymize_request(&body_bytes, provider, &state) {
         Ok(result) => {
             if result.was_pseudonymized {
@@ -351,7 +351,7 @@ async fn proxy_handler(
         "Forwarding requête"
     );
 
-    // Envoyer à l'upstream
+    // Send to upstream
     let start = std::time::Instant::now();
     let upstream_response = state
         .client
@@ -381,7 +381,7 @@ async fn proxy_handler(
         streaming: Some(is_sse),
     });
 
-    // --- DÉ-PSEUDONYMISATION DE LA RÉPONSE ---
+    // --- RESPONSE DE-PSEUDONYMIZATION ---
     if was_pseudonymized {
         build_depseudonymized_response(upstream_response, provider, &state).await
     } else {
@@ -389,7 +389,7 @@ async fn proxy_handler(
     }
 }
 
-/// Résultat de la pseudonymisation d'une requête.
+/// Result of request pseudonymization.
 struct PseudonymizeResult {
     body: Vec<u8>,
     was_pseudonymized: bool,
@@ -397,7 +397,7 @@ struct PseudonymizeResult {
     pii_types: Vec<String>,
 }
 
-/// Pseudonymise le body de la requête.
+/// Pseudonymizes the request body.
 fn pseudonymize_request(
     body_bytes: &[u8],
     provider: router::Provider,
@@ -406,7 +406,7 @@ fn pseudonymize_request(
     let mut body: serde_json::Value =
         serde_json::from_slice(body_bytes).map_err(|e| format!("JSON invalide : {}", e))?;
 
-    // Prétraitement : convertir les blocs document (PDF, DOCX) en blocs texte
+    // Preprocessing: convert document blocks (PDF, DOCX) to text blocks
     let media_converted = preprocess_media_blocks(&mut body, provider);
     if media_converted > 0 {
         tracing::debug!(media_converted, "Blocs media convertis en texte");
@@ -472,7 +472,7 @@ fn pseudonymize_request(
     })
 }
 
-/// Construit une réponse avec dé-pseudonymisation.
+/// Builds a response with de-pseudonymization.
 async fn build_depseudonymized_response(
     upstream: reqwest::Response,
     provider: router::Provider,
@@ -489,18 +489,18 @@ async fn build_depseudonymized_response(
 
     let mut response_builder = Response::builder().status(status.as_u16());
     for (name, value) in headers.iter() {
-        // Ne pas copier content-length car on modifie le body
+        // Do not copy content-length since we modify the body
         if name != header::CONTENT_LENGTH {
             response_builder = response_builder.header(name, value);
         }
     }
 
     if is_sse {
-        // Mode streaming SSE avec dé-pseudonymisation via buffer
+        // SSE streaming mode with de-pseudonymization via buffer
         let mapping = Arc::clone(&state.mapping);
         let byte_stream = upstream.bytes_stream();
 
-        // Calculer la longueur max des pseudonymes pour le buffer
+        // Compute the max pseudonym length for the buffer
         let max_pseudo_len = mapping
             .all_pseudonyms_sorted()
             .first()
@@ -520,7 +520,7 @@ async fn build_depseudonymized_response(
                         let chunk_str = String::from_utf8_lossy(&chunk);
                         let mut output = String::new();
 
-                        // Traiter chaque événement SSE dans le chunk
+                        // Process each SSE event in the chunk
                         for event_str in chunk_str.split("\n\n") {
                             if event_str.trim().is_empty() {
                                 continue;
@@ -528,41 +528,41 @@ async fn build_depseudonymized_response(
 
                             if let Some(event) = parse_sse_chunk(event_str, provider) {
                                 if event.is_done {
-                                    // Flush le buffer restant
+                                    // Flush the remaining buffer
                                     let remaining = buffer.flush_remaining(&mapping);
                                     if !remaining.is_empty() {
-                                        // On ne peut pas reconstruire un SSE event ici facilement
-                                        // Le remaining est juste du texte accumulé
+                                        // Cannot easily reconstruct an SSE event here
+                                        // The remaining is just accumulated text
                                     }
                                     output.push_str(event_str);
                                     output.push_str("\n\n");
                                     done = true;
                                 } else if let Some(text_delta) = &event.text_delta {
-                                    // Pousser le texte dans le buffer
+                                    // Push the text into the buffer
                                     let flushed = buffer.push(text_delta, &mapping);
                                     if !flushed.is_empty() {
-                                        // Reconstruire l'événement SSE avec le texte dé-pseudonymisé
+                                        // Reconstruct the SSE event with de-pseudonymized text
                                         if let Some(rebuilt) =
                                             rebuild_sse_chunk(&event, &flushed, provider)
                                         {
                                             output.push_str(&rebuilt);
                                         }
                                     }
-                                    // Si rien n'est flushed, on attend le prochain token
+                                    // If nothing is flushed, wait for the next token
                                 } else {
-                                    // Événement sans texte (message_start, etc.) → passer tel quel
+                                    // Event without text (message_start, etc.) -> pass through as-is
                                     output.push_str(event_str);
                                     output.push_str("\n\n");
                                 }
                             } else {
-                                // Chunk non parsable → passer tel quel
+                                // Unparseable chunk -> pass through as-is
                                 output.push_str(event_str);
                                 output.push_str("\n\n");
                             }
                         }
 
                         if output.is_empty() {
-                            // Rien à flusher pour l'instant, mais on doit continuer le stream
+                            // Nothing to flush yet, but we must continue the stream
                             Some((Ok::<Bytes, std::io::Error>(Bytes::new()), (stream, buffer, mapping, provider, done)))
                         } else {
                             Some((Ok(Bytes::from(output)), (stream, buffer, mapping, provider, done)))
@@ -573,10 +573,10 @@ async fn build_depseudonymized_response(
                         Some((Err(err), (stream, buffer, mapping, provider, done)))
                     }
                     None => {
-                        // Stream terminé, flush le buffer
+                        // Stream ended, flush the buffer
                         let remaining = buffer.flush_remaining(&mapping);
                         if !remaining.is_empty() {
-                            // Dernier morceau
+                            // Last piece
                             Some((Ok(Bytes::from(remaining)), (stream, buffer, mapping, provider, true)))
                         } else {
                             None
@@ -591,7 +591,7 @@ async fn build_depseudonymized_response(
             .body(body)
             .map_err(|e| ProxyError::Http(e.to_string()))
     } else {
-        // Mode non-streaming : dé-pseudonymiser la réponse complète
+        // Non-streaming mode: de-pseudonymize the full response
         let body_bytes = upstream.bytes().await?;
         let body_str = String::from_utf8_lossy(&body_bytes);
 
@@ -610,7 +610,7 @@ async fn build_depseudonymized_response(
     }
 }
 
-/// Construit une réponse passthrough (sans dé-pseudonymisation).
+/// Builds a passthrough response (without de-pseudonymization).
 async fn build_passthrough_response(upstream: reqwest::Response) -> Result<Response, ProxyError> {
     let status = upstream.status();
     let headers = upstream.headers().clone();
@@ -643,7 +643,7 @@ async fn build_passthrough_response(upstream: reqwest::Response) -> Result<Respo
     }
 }
 
-/// Page HTML du dashboard de monitoring, embarquée dans le binaire.
+/// Monitoring dashboard HTML page, embedded in the binary.
 const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <html lang="fr">
 <head>

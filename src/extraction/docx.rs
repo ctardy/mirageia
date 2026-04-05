@@ -1,16 +1,16 @@
-/// Extraction de texte depuis un fichier DOCX (ZIP contenant des XML).
+/// Text extraction from a DOCX file (ZIP containing XML files).
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
-/// Extrait le texte d'un DOCX fourni sous forme de bytes.
-/// Retourne None si les données sont invalides ou si aucun texte ne peut être extrait.
+/// Extracts text from a DOCX provided as bytes.
+/// Returns None if the data is invalid or no text can be extracted.
 pub fn extract(data: &[u8]) -> Option<String> {
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor).ok()?;
 
     let mut parts: Vec<String> = Vec::new();
 
-    // Contenu principal — word/document.xml
+    // Main content — word/document.xml
     if let Some(content_text) = read_entry_text(&mut archive, "word/document.xml") {
         let text = extract_w_t_text(&content_text);
         if !text.trim().is_empty() {
@@ -18,7 +18,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
         }
     }
 
-    // Commentaires — word/comments.xml (optionnel)
+    // Comments — word/comments.xml (optional)
     if let Some(comments_text) = read_entry_text(&mut archive, "word/comments.xml") {
         let text = extract_w_t_text(&comments_text);
         if !text.trim().is_empty() {
@@ -26,7 +26,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
         }
     }
 
-    // Métadonnées — docProps/core.xml (optionnel)
+    // Metadata — docProps/core.xml (optional)
     if let Some(core_text) = read_entry_text(&mut archive, "docProps/core.xml") {
         let mut meta_lines: Vec<String> = Vec::new();
 
@@ -63,7 +63,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
     Some(parts.join("\n\n"))
 }
 
-/// Lit une entrée ZIP et retourne son contenu sous forme de String UTF-8.
+/// Reads a ZIP entry and returns its content as a UTF-8 String.
 fn read_entry_text(archive: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<String> {
     let mut entry = archive.by_name(name).ok()?;
     let mut content = String::new();
@@ -71,8 +71,8 @@ fn read_entry_text(archive: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Optio
     Some(content)
 }
 
-/// Extrait le texte des balises <w:t> dans un XML DOCX.
-/// Concatène avec des espaces entre les runs et des sauts de ligne entre les paragraphes.
+/// Extracts text from <w:t> tags in a DOCX XML.
+/// Concatenates with spaces between runs and newlines between paragraphs.
 fn extract_w_t_text(xml: &str) -> String {
     let mut result = String::new();
     let mut current_para = String::new();
@@ -81,15 +81,15 @@ fn extract_w_t_text(xml: &str) -> String {
     let len = bytes.len();
 
     while pos < len {
-        // Chercher la prochaine balise ouvrante
+        // Find the next opening tag
         if let Some(tag_start) = find_bytes(bytes, pos, b"<") {
-            // Lire le nom de la balise
+            // Read the tag name
             let tag_name_start = tag_start + 1;
             if tag_name_start >= len {
                 break;
             }
 
-            // Fermeture de paragraphe
+            // Paragraph closing
             if (bytes[tag_name_start..].starts_with(b"/w:p>")
                 || bytes[tag_name_start..].starts_with(b"w:p ")
                 || bytes[tag_name_start..].starts_with(b"w:p>"))
@@ -100,7 +100,7 @@ fn extract_w_t_text(xml: &str) -> String {
                 && bytes[tag_name_start + 2] == b'p'
                 && bytes[tag_name_start..].starts_with(b"/w:p>")
             {
-                // Fin de paragraphe
+                // End of paragraph
                 if !current_para.trim().is_empty() {
                     if !result.is_empty() {
                         result.push('\n');
@@ -110,19 +110,19 @@ fn extract_w_t_text(xml: &str) -> String {
                 current_para.clear();
             }
 
-            // Balise <w:t> ou <w:t xml:space="preserve">
+            // Tag <w:t> or <w:t xml:space="preserve">
             if bytes[tag_name_start..].starts_with(b"w:t") {
                 let after_wt = tag_name_start + 3;
                 let next = bytes.get(after_wt).copied();
                 if next == Some(b'>') || next == Some(b' ') || next == Some(b'\n') {
-                    // Trouver la fin de la balise ouvrante >
+                    // Find the end of the opening tag >
                     if let Some(end_open) = find_bytes(bytes, tag_name_start, b">") {
                         let content_start = end_open + 1;
-                        // Trouver </w:t>
+                        // Find </w:t>
                         if let Some(close_start) = find_bytes_slice(bytes, content_start, b"</w:t>") {
                             let text_bytes = &bytes[content_start..close_start];
                             if let Ok(text) = std::str::from_utf8(text_bytes) {
-                                // Décoder les entités XML basiques
+                                // Decode basic XML entities
                                 let decoded = decode_xml_entities(text);
                                 if !decoded.is_empty() {
                                     if !current_para.is_empty() {
@@ -131,14 +131,14 @@ fn extract_w_t_text(xml: &str) -> String {
                                     current_para.push_str(&decoded);
                                 }
                             }
-                            pos = close_start + 6; // longueur de </w:t>
+                            pos = close_start + 6; // length of </w:t>
                             continue;
                         }
                     }
                 }
             }
 
-            // Avancer après la balise
+            // Advance past the tag
             if let Some(tag_end) = find_bytes(bytes, tag_start + 1, b">") {
                 pos = tag_end + 1;
             } else {
@@ -149,7 +149,7 @@ fn extract_w_t_text(xml: &str) -> String {
         }
     }
 
-    // Ajouter le dernier paragraphe s'il n'est pas terminé par </w:p>
+    // Add the last paragraph if it is not terminated by </w:p>
     if !current_para.trim().is_empty() {
         if !result.is_empty() {
             result.push('\n');
@@ -160,7 +160,7 @@ fn extract_w_t_text(xml: &str) -> String {
     result
 }
 
-/// Extrait le contenu texte d'un élément XML par son nom de balise.
+/// Extracts the text content of an XML element by its tag name.
 fn extract_xml_element(xml: &str, tag: &str) -> Option<String> {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -171,7 +171,7 @@ fn extract_xml_element(xml: &str, tag: &str) -> Option<String> {
     Some(decode_xml_entities(&xml[start..end]))
 }
 
-/// Décode les entités XML basiques.
+/// Decodes basic XML entities.
 fn decode_xml_entities(s: &str) -> String {
     s.replace("&amp;", "&")
         .replace("&lt;", "<")
@@ -180,7 +180,7 @@ fn decode_xml_entities(s: &str) -> String {
         .replace("&apos;", "'")
 }
 
-/// Trouve l'index du prochain octet `needle` dans `bytes` à partir de `from`.
+/// Finds the index of the next `needle` byte in `bytes` starting from `from`.
 fn find_bytes(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     if needle.len() == 1 {
         bytes[from..].iter().position(|&b| b == needle[0]).map(|i| i + from)
@@ -189,7 +189,7 @@ fn find_bytes(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     }
 }
 
-/// Trouve l'index de la prochaine occurrence de `needle` dans `bytes` à partir de `from`.
+/// Finds the index of the next occurrence of `needle` in `bytes` starting from `from`.
 fn find_bytes_slice(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || from + needle.len() > bytes.len() {
         return None;
@@ -200,7 +200,7 @@ fn find_bytes_slice(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
         .map(|i| i + from)
 }
 
-/// Construit un DOCX minimal en mémoire (pour les tests).
+/// Builds a minimal DOCX in memory (for tests).
 #[cfg(test)]
 pub fn build_test_docx(
     document_xml: Option<&str>,

@@ -1,32 +1,32 @@
 use crate::detection::error::DetectionError;
 
-/// Résultat de la tokenisation d'un texte.
+/// Result of text tokenization.
 #[derive(Debug, Clone)]
 pub struct TokenizedInput {
-    /// IDs des tokens.
+    /// Token IDs.
     pub input_ids: Vec<i64>,
-    /// Masque d'attention (1 = token réel, 0 = padding).
+    /// Attention mask (1 = real token, 0 = padding).
     pub attention_mask: Vec<i64>,
-    /// Mapping token_idx → (start_byte, end_byte) dans le texte original.
-    /// Les tokens spéciaux ([CLS], [SEP]) ont un offset (0, 0).
+    /// Mapping token_idx -> (start_byte, end_byte) in the original text.
+    /// Special tokens ([CLS], [SEP]) have offset (0, 0).
     pub offsets: Vec<(usize, usize)>,
 }
 
-/// Segment de texte pour le traitement de textes longs.
+/// Text segment for processing long texts.
 #[derive(Debug, Clone)]
 pub struct TextSegment {
     pub text: String,
     pub global_offset: usize,
 }
 
-/// Wrapper autour du tokenizer HuggingFace.
+/// Wrapper around the HuggingFace tokenizer.
 pub struct PiiTokenizer {
     tokenizer: tokenizers::Tokenizer,
     max_length: usize,
 }
 
 impl PiiTokenizer {
-    /// Charge un tokenizer depuis un fichier tokenizer.json.
+    /// Loads a tokenizer from a tokenizer.json file.
     pub fn from_file(path: &std::path::Path) -> Result<Self, DetectionError> {
         let tokenizer = tokenizers::Tokenizer::from_file(path)
             .map_err(|e| DetectionError::Tokenizer(e.to_string()))?;
@@ -37,7 +37,7 @@ impl PiiTokenizer {
         })
     }
 
-    /// Tokenise un texte et retourne les IDs, masques et offsets.
+    /// Tokenizes a text and returns IDs, masks, and offsets.
     pub fn encode(&self, text: &str) -> Result<TokenizedInput, DetectionError> {
         let encoding = self
             .tokenizer
@@ -59,13 +59,13 @@ impl PiiTokenizer {
         })
     }
 
-    /// Découpe un texte long en segments avec chevauchement.
-    /// Chaque segment fait au maximum `max_tokens` tokens utiles.
-    /// Le chevauchement est de `overlap` caractères.
+    /// Splits a long text into segments with overlap.
+    /// Each segment has at most `max_tokens` useful tokens.
+    /// The overlap is `overlap` characters.
     pub fn segment_text(&self, text: &str, overlap_chars: usize) -> Vec<TextSegment> {
-        // Estimer la taille en caractères par segment
-        // On utilise un ratio conservateur : ~4 chars par token en moyenne
-        let max_chars = self.max_length * 3; // sous-estimation pour sécurité
+        // Estimate size in characters per segment
+        // Using a conservative ratio: ~4 chars per token on average
+        let max_chars = self.max_length * 3; // underestimate for safety
 
         if text.len() <= max_chars {
             return vec![TextSegment {
@@ -116,7 +116,7 @@ impl PiiTokenizer {
     }
 }
 
-/// Découpe un texte en segments sans tokenizer (version standalone pour les tests).
+/// Splits text into segments without a tokenizer (standalone version for tests).
 pub fn segment_text_simple(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<TextSegment> {
     if text.len() <= max_chars {
         return vec![TextSegment {
@@ -132,7 +132,7 @@ pub fn segment_text_simple(text: &str, max_chars: usize, overlap_chars: usize) -
         let end = (start + max_chars).min(text.len());
 
         let actual_end = if end < text.len() {
-            // Chercher le dernier espace APRÈS start pour ne pas reculer
+            // Find the last space AFTER start to avoid going backwards
             text[start..end]
                 .rfind(char::is_whitespace)
                 .map(|pos| start + pos + 1)
@@ -141,7 +141,7 @@ pub fn segment_text_simple(text: &str, max_chars: usize, overlap_chars: usize) -
             end
         };
 
-        // Garde : si actual_end == start, forcer la progression
+        // Guard: if actual_end == start, force progress
         let actual_end = if actual_end <= start {
             end
         } else {
@@ -182,21 +182,21 @@ mod tests {
 
     #[test]
     fn test_segment_long_text() {
-        // Créer un texte de ~200 chars
+        // Create a ~200 char text
         let text = "mot ".repeat(50); // 200 chars
         let segments = segment_text_simple(&text, 80, 20);
 
         assert!(segments.len() >= 2);
 
-        // Premier segment commence à 0
+        // First segment starts at 0
         assert_eq!(segments[0].global_offset, 0);
 
-        // Chaque segment fait au max 80 chars
+        // Each segment is at most 80 chars
         for seg in &segments {
             assert!(seg.text.len() <= 80);
         }
 
-        // Le dernier segment couvre la fin du texte
+        // The last segment covers the end of the text
         let last = segments.last().unwrap();
         assert_eq!(last.global_offset + last.text.len(), text.len());
     }
@@ -208,7 +208,7 @@ mod tests {
 
         assert!(segments.len() >= 2);
 
-        // Vérifier le chevauchement : le début du segment N+1 doit être avant la fin du segment N
+        // Verify overlap: the start of segment N+1 must be before the end of segment N
         for i in 0..segments.len() - 1 {
             let end_of_current = segments[i].global_offset + segments[i].text.len();
             let start_of_next = segments[i + 1].global_offset;
@@ -225,7 +225,7 @@ mod tests {
         let text = "abcdefghij klmnopqrst uvwxyz";
         let segments = segment_text_simple(text, 15, 5);
 
-        // Aucun segment ne devrait couper au milieu d'un mot
+        // No segment should cut in the middle of a word
         for seg in &segments {
             assert!(
                 !seg.text.ends_with(|c: char| c.is_alphabetic())

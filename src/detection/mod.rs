@@ -20,7 +20,7 @@ use crate::detection::tokenizer::PiiTokenizer;
 #[cfg(feature = "onnx")]
 use crate::detection::types::PiiType as PType;
 
-/// Détecteur de PII complet : tokenizer + modèle ONNX + post-traitement.
+/// Full PII detector: tokenizer + ONNX model + post-processing.
 #[cfg(feature = "onnx")]
 pub struct PiiDetector {
     model: model::PiiModel,
@@ -32,7 +32,7 @@ pub struct PiiDetector {
 
 #[cfg(feature = "onnx")]
 impl PiiDetector {
-    /// Initialise le détecteur en chargeant le modèle et le tokenizer.
+    /// Initializes the detector by loading the model and tokenizer.
     pub fn new(
         model_path: &std::path::Path,
         tokenizer_path: &std::path::Path,
@@ -50,7 +50,7 @@ impl PiiDetector {
         })
     }
 
-    /// Initialise depuis le répertoire de modèles par défaut (~/.mirageia/models/<model_name>/).
+    /// Initializes from the default models directory (~/.mirageia/models/<model_name>/).
     pub fn from_model_name(model_name: &str) -> Result<Self, DetectionError> {
         let (model_path, tokenizer_path) = model::check_model_files(model_name)?;
 
@@ -60,13 +60,13 @@ impl PiiDetector {
         Self::new(&model_path, &tokenizer_path, label_map)
     }
 
-    /// Définit des seuils de confiance personnalisés par type de PII.
+    /// Sets custom confidence thresholds per PII type.
     pub fn with_thresholds(mut self, thresholds: HashMap<PType, f32>) -> Self {
         self.thresholds = thresholds;
         self
     }
 
-    /// Détecte les PII dans un texte.
+    /// Detects PII in a text.
     pub fn detect(&self, text: &str) -> Result<Vec<PiiEntity>, DetectionError> {
         if text.trim().is_empty() {
             return Ok(vec![]);
@@ -96,7 +96,7 @@ impl PiiDetector {
     }
 }
 
-/// Charge le label_map depuis un fichier config.json du modèle HuggingFace.
+/// Loads the label_map from a HuggingFace model config.json file.
 pub fn load_label_map(config_path: &std::path::Path) -> Result<Vec<String>, DetectionError> {
     let content = std::fs::read_to_string(config_path).map_err(|e| {
         DetectionError::ModelNotFound(format!("config.json introuvable : {:?} — {}", config_path, e))

@@ -1,92 +1,92 @@
-# CLAUDE.md — Contexte pour Claude Code
+# CLAUDE.md — Context for Claude Code
 
-## Règles absolues (priorité maximale)
+## Absolute rules (highest priority)
 
-- **Langue** : toujours écrire en français avec les accents (é, è, ê, à, ù, ç, etc.) dans les messages, commentaires et documentation
-- **Chemins shell** : toujours des chemins absolus dans les commandes proposées (ex: `/c/dev/projects/mirageia`, jamais `./`)
-- **Git pull avec changements en cours** : `git stash && git pull --rebase && git stash pop` — ne jamais faire `git pull --rebase` directement
-- **Git commit prudent** : vérifier `git status` et `git diff --cached` avant de commiter. Ne jamais `git add .` ou `git add -A`
-- **⛔ No rétro-compatibilité** : pas de `@Deprecated`, pas de fallback inutile. Le projet est en phase de construction
-- **Ne jamais modifier sans demande** : ne jamais éditer de fichiers sans demande explicite de l'utilisateur
-- **LLM embarqué, pas de serveur** : le modèle tourne via ONNX Runtime dans le processus — jamais de dépendance vers Ollama, LM Studio ou un serveur externe
-- **Zéro donnée sensible en clair** : le mapping de pseudonymisation reste 100% local, jamais persisté en clair sur disque, jamais loggé
+- **Language**: always write in English for code, commits, CLI messages, comments, and documentation. French translations are maintained in `docs/fr/` as secondary.
+- **Shell paths**: always use absolute paths in proposed commands (e.g., `/c/dev/projects/mirageia`, never `./`)
+- **Git pull with pending changes**: `git stash && git pull --rebase && git stash pop` — never run `git pull --rebase` directly
+- **Git commit safety**: check `git status` and `git diff --cached` before committing. Never `git add .` or `git add -A`
+- **No backward compatibility**: no `@Deprecated`, no useless fallback. The project is in construction phase
+- **Never modify without request**: never edit files without explicit user request
+- **Embedded LLM, no server**: the model runs via ONNX Runtime in-process — never depend on Ollama, LM Studio, or any external server
+- **Zero cleartext sensitive data**: the pseudonymization mapping stays 100% local, never persisted in cleartext on disk, never logged
 
 ---
 
-## Description du projet
+## Project description
 
-**MirageIA** — Proxy de pseudonymisation intelligent pour API LLM avec modèle embarqué.
+**MirageIA** — Intelligent pseudonymization proxy for LLM APIs with embedded model.
 
-Intercepte les requêtes vers les API LLM (Anthropic, OpenAI), détecte les données sensibles (PII) via un modèle de langage embarqué (ONNX Runtime), les pseudonymise avant envoi, puis réinjecte les valeurs originales dans les réponses.
+Intercepts requests to LLM APIs (Anthropic, OpenAI), detects sensitive data (PII) via an embedded language model (ONNX Runtime), pseudonymizes them before sending, then re-injects original values in responses.
 
-### Principe de fonctionnement
+### How it works
 
 ```
 Application (Claude Code, etc.)
-       ↓ requête
-[MirageIA — processus unique]
-  ├── Modèle ONNX embarqué (détection PII contextuelle)
-  ├── Pseudonymisation (remplacement par valeurs fictives + mapping ID)
-  ├── Table de mapping en mémoire (chiffrée AES-256)
-       ↓ requête nettoyée
-API LLM (Anthropic / OpenAI)
-       ↓ réponse
+       | request
+[MirageIA — single process]
+  |-- Embedded ONNX model (contextual PII detection)
+  |-- Pseudonymization (replacement with fake values + mapping ID)
+  |-- In-memory mapping table (AES-256 encrypted)
+       | cleaned request
+LLM API (Anthropic / OpenAI)
+       | response
 [MirageIA]
-  ├── Dé-pseudonymisation (réinjection des valeurs originales via mapping ID)
-       ↓ réponse restaurée
+  |-- De-pseudonymization (re-injection of original values via mapping ID)
+       | restored response
 Application
 ```
 
-### Exemple concret
+### Concrete example
 
-| Donnée originale | Envoyé à l'API | ID mapping |
-|------------------|----------------|------------|
+| Original data | Sent to API | Mapping ID |
+|---------------|-------------|------------|
 | `192.168.1.22` | `192.168.1.223` | 458 |
 | `Tardy` | `Gerard` | 253 |
 | `chris@example.com` | `paul@example.com` | 254 |
 
-L'API LLM ne voit jamais les vraies données. La réponse contient `Gerard` → MirageIA le remplace par `Tardy` avant de renvoyer à l'application.
+The LLM API never sees the real data. The response contains `Gerard` -> MirageIA replaces it with `Tardy` before returning to the application.
 
-### Différenciateurs
+### Differentiators
 
-- **LLM embarqué** : pas de serveur Ollama ni service externe — un seul binaire autonome (comme Murmure embarque Whisper)
-- **Détection contextuelle** : le modèle comprend le contexte (ne masque pas "Thomas Edison" dans un cours d'histoire)
-- **Pseudonymisation réversible** : mapping bidirectionnel avec IDs, pas de simple masquage `[REDACTED]`
-- **Streaming SSE** : compatible avec le streaming des réponses LLM
-- **Zéro config** : fonctionne out-of-the-box, le proxy se place entre l'app et l'API
+- **Embedded LLM**: no Ollama server or external service — a single autonomous binary (like Murmure embeds Whisper)
+- **Contextual detection**: the model understands context (won't mask "Thomas Edison" in a history lesson)
+- **Reversible pseudonymization**: bidirectional mapping with IDs, not simple `[REDACTED]` masking
+- **SSE streaming**: compatible with LLM response streaming
+- **Zero config**: works out-of-the-box, the proxy sits between the app and the API
 
-### Types de PII détectés
+### Detected PII types
 
-- Noms de personnes, prénoms, pseudonymes
-- Adresses IP (v4, v6)
-- Adresses e-mail
-- Numéros de téléphone
-- Adresses postales
-- Numéros de carte bancaire, IBAN
-- Identifiants (numéro de sécu, passeport, etc.)
-- Clés API, tokens, secrets
-- URLs internes / noms de domaines privés
-- Noms de serveurs, chemins de fichiers sensibles
-
----
-
-## Stack technique (cible)
-
-| Composant | Techno |
-|-----------|--------|
-| Runtime | Rust + Tauri (binaire unique, cross-platform) |
-| Modèle PII | ONNX Runtime (DistilBERT-PII ou Qwen3 0.6B quantifié) |
-| Proxy HTTP | Interception man-in-the-middle (hyper / axum) |
-| Mapping | En mémoire, chiffré AES-256-GCM, non persisté |
-| Interface | Tray icon + dashboard local minimal (Tauri webview) |
-| Tests | cargo test + fixtures PII |
+- Person names, first names, pseudonyms
+- IP addresses (v4, v6)
+- Email addresses
+- Phone numbers
+- Postal addresses
+- Credit card numbers, IBAN
+- Identifiers (social security, passport, etc.)
+- API keys, tokens, secrets
+- Internal URLs / private domain names
+- Server names, sensitive file paths
 
 ---
 
-## Commandes de build
+## Technical stack (target)
+
+| Component | Technology |
+|-----------|-----------|
+| Runtime | Rust + Tauri (single binary, cross-platform) |
+| PII Model | ONNX Runtime (DistilBERT-PII or Qwen3 0.6B quantized) |
+| HTTP Proxy | Man-in-the-middle interception (hyper / axum) |
+| Mapping | In-memory, AES-256-GCM encrypted, not persisted |
+| Interface | Tray icon + minimal local dashboard (Tauri webview) |
+| Tests | cargo test + PII fixtures |
+
+---
+
+## Build commands
 
 ```bash
-# À définir quand la stack sera choisie
+# To be defined when the stack is finalized
 cd /c/dev/projects/mirageia
 ```
 
@@ -94,13 +94,13 @@ cd /c/dev/projects/mirageia
 
 ## Documentation
 
-| Sujet | FR | EN |
+| Topic | EN | FR |
 |-------|----|----|
-| Architecture globale | `docs/fr/architecture/vue-ensemble.md` | `docs/en/architecture/overview.md` |
-| Flux de pseudonymisation | `docs/fr/architecture/flux-pseudonymisation.md` | `docs/en/architecture/pseudonymization-flow.md` |
-| Modèle PII embarqué | `docs/fr/technique/modele-pii.md` | `docs/en/technical/pii-model.md` |
-| Proxy HTTP | `docs/fr/technique/proxy-http.md` | `docs/en/technical/http-proxy.md` |
-| Déploiement ops | `docs/fr/deploiement-ops.md` | `docs/en/deployment-ops.md` |
-| Recherche et état de l'art | `docs/recherche/etat-de-lart.md` | |
+| Architecture overview | `docs/en/architecture/overview.md` | `docs/fr/architecture/vue-ensemble.md` |
+| Pseudonymization flow | `docs/en/architecture/pseudonymization-flow.md` | `docs/fr/architecture/flux-pseudonymisation.md` |
+| Embedded PII model | `docs/en/technical/pii-model.md` | `docs/fr/technique/modele-pii.md` |
+| HTTP Proxy | `docs/en/technical/http-proxy.md` | `docs/fr/technique/proxy-http.md` |
+| Deployment ops | `docs/en/deployment-ops.md` | `docs/fr/deploiement-ops.md` |
+| Research & state of the art | `docs/recherche/etat-de-lart.md` | |
 | Tickets | `docs/tickets/` | |
-| Index complet | `docs/README.md` |
+| Full index | `docs/README.md` |

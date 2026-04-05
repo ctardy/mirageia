@@ -5,15 +5,15 @@ use regex::Regex;
 use crate::detection::PiiType;
 use crate::mapping::MappingTable;
 
-/// Paire de fragments : un fragment du pseudonyme et son correspondant original.
+/// Fragment pair: a fragment of the pseudonym and its corresponding original.
 #[derive(Debug, Clone)]
 struct FragmentPair {
     pseudo_fragment: String,
     original_fragment: String,
 }
 
-/// Extrait les fragments structurels d'un mapping selon le type de PII.
-/// Seuls les types décomposables (IP, CC, NationalId) produisent des fragments.
+/// Extracts structural fragments from a mapping based on the PII type.
+/// Only decomposable types (IP, CC, NationalId) produce fragments.
 fn decompose_fragments(pseudonym: &str, original: &str, pii_type: PiiType) -> Vec<FragmentPair> {
     match pii_type {
         PiiType::IpAddress => decompose_ip(pseudonym, original),
@@ -25,7 +25,7 @@ fn decompose_fragments(pseudonym: &str, original: &str, pii_type: PiiType) -> Ve
     }
 }
 
-/// Décompose une IP v4 en octets.
+/// Decomposes an IPv4 address into octets.
 fn decompose_ip(pseudo: &str, original: &str) -> Vec<FragmentPair> {
     if pseudo.contains(':') || original.contains(':') {
         return vec![];
@@ -46,7 +46,7 @@ fn decompose_ip(pseudo: &str, original: &str) -> Vec<FragmentPair> {
         .collect()
 }
 
-/// Décompose un numéro de carte de crédit en groupes de 4 chiffres.
+/// Decomposes a credit card number into groups of 4 digits.
 fn decompose_credit_card(pseudo: &str, original: &str) -> Vec<FragmentPair> {
     let pseudo_digits: String = pseudo.chars().filter(|c| c.is_ascii_digit()).collect();
     let orig_digits: String = original.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -68,7 +68,7 @@ fn decompose_credit_card(pseudo: &str, original: &str) -> Vec<FragmentPair> {
     pairs
 }
 
-/// Décompose un identifiant segmenté (NSS, etc.) en parties séparées par des espaces.
+/// Decomposes a segmented identifier (NSS, etc.) into parts separated by spaces.
 fn decompose_segmented(pseudo: &str, original: &str) -> Vec<FragmentPair> {
     let pseudo_parts: Vec<&str> = pseudo.split_whitespace().collect();
     let orig_parts: Vec<&str> = original.split_whitespace().collect();
@@ -86,27 +86,27 @@ fn decompose_segmented(pseudo: &str, original: &str) -> Vec<FragmentPair> {
         .collect()
 }
 
-/// Restaure les fragments de pseudonymes décomposés par le LLM dans le texte.
+/// Restores pseudonym fragments decomposed by the LLM in the text.
 ///
-/// Appelé APRÈS la dé-pseudonymisation principale (remplacement des tokens complets).
-/// Détecte quand le LLM a extrait des sous-parties d'un pseudonyme (octets d'IP,
-/// groupes de chiffres CC, segments NSS) et les remplace par les sous-parties originales.
+/// Called AFTER the main de-pseudonymization (complete token replacement).
+/// Detects when the LLM has extracted sub-parts of a pseudonym (IP octets,
+/// CC digit groups, NSS segments) and replaces them with the original sub-parts.
 ///
-/// Stratégie anti-faux-positifs :
-/// - Fragments ≥ 2 caractères : remplacement avec limites de mot (\b)
-/// - Fragments de 1 caractère : remplacement uniquement en contexte analytique
-///   (après `=`, `:`, ou en début de valeur structurée)
-/// - Dédoublonnage : si un même fragment pseudo mappe vers plusieurs originaux
-///   différents, il est ignoré (ambiguïté)
-/// - Protection des valeurs originales déjà restaurées : les zones contenant des PII
-///   restaurées sont masquées pendant le remplacement de fragments pour éviter
-///   toute corruption (ex: `o'brien` corrompu par un fragment IP `o`)
+/// False-positive prevention strategy:
+/// - Fragments >= 2 characters: replacement with word boundaries (\b)
+/// - Single-character fragments: replacement only in analytical context
+///   (after `=`, `:`, or at the start of a structured value)
+/// - Deduplication: if the same pseudo fragment maps to multiple different
+///   originals, it is skipped (ambiguity)
+/// - Protection of already restored original values: zones containing restored
+///   PII are masked during fragment replacement to prevent
+///   any corruption (e.g., `o'brien` corrupted by an IP fragment `o`)
 pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
     let entries = mapping.all_entries_with_type();
 
     let mut all_fragments: Vec<FragmentPair> = Vec::new();
 
-    // Collecter les valeurs originales pour les protéger
+    // Collect original values to protect them
     let mut originals_to_protect: Vec<String> = Vec::new();
 
     for (pseudo, original, pii_type) in &entries {
@@ -119,8 +119,8 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
         return text.to_string();
     }
 
-    // Dédoublonnage : si un pseudo_fragment mappe vers plusieurs originaux différents,
-    // c'est ambigu → on l'exclut
+    // Deduplication: if a pseudo_fragment maps to multiple different originals,
+    // it is ambiguous -> we exclude it
     let mut fragment_map: HashMap<String, Vec<String>> = HashMap::new();
     for pair in &all_fragments {
         fragment_map
@@ -129,13 +129,13 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
             .push(pair.original_fragment.clone());
     }
 
-    // Garder seulement les fragments non ambigus
+    // Keep only non-ambiguous fragments
     let mut safe_fragments: Vec<FragmentPair> = Vec::new();
     for pair in &all_fragments {
         let targets = &fragment_map[&pair.pseudo_fragment];
-        // Vérifier que toutes les cibles sont identiques
+        // Verify that all targets are identical
         if targets.iter().all(|t| t == &pair.original_fragment) {
-            // Vérifier qu'on n'a pas déjà ajouté ce fragment
+            // Check that we haven't already added this fragment
             if !safe_fragments
                 .iter()
                 .any(|f| f.pseudo_fragment == pair.pseudo_fragment)
@@ -149,16 +149,16 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
         return text.to_string();
     }
 
-    // Trier par longueur décroissante du fragment pseudo (plus longs d'abord)
+    // Sort by descending length of the pseudo fragment (longest first)
     safe_fragments.sort_by(|a, b| b.pseudo_fragment.len().cmp(&a.pseudo_fragment.len()));
 
-    // --- Protection des valeurs originales ---
-    // Remplacer temporairement les valeurs déjà restaurées par des placeholders
-    // pour empêcher le remplacement de fragments de les corrompre.
+    // --- Protection of original values ---
+    // Temporarily replace already restored values with placeholders
+    // to prevent fragment replacement from corrupting them.
     let mut result = text.to_string();
     let mut placeholders: Vec<(String, String)> = Vec::new();
 
-    // Trier par longueur décroissante pour éviter les remplacements partiels
+    // Sort by descending length to avoid partial replacements
     let mut sorted_originals = originals_to_protect;
     sorted_originals.sort_by_key(|b| std::cmp::Reverse(b.len()));
     sorted_originals.dedup();
@@ -169,11 +169,11 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
         placeholders.push((placeholder, original.clone()));
     }
 
-    // --- Remplacement des fragments ---
+    // --- Fragment replacement ---
     for pair in &safe_fragments {
         if pair.pseudo_fragment.len() < 2 {
-            // Fragments courts : remplacement contextuel uniquement
-            // Contexte : après = ou : (avec espace optionnel), ou dans une liste numérique
+            // Short fragments: contextual replacement only
+            // Context: after = or : (with optional space), or in a numeric list
             let escaped = regex::escape(&pair.pseudo_fragment);
             let pattern = format!(r"(?<=[=:,]\s?){escaped}(?:\b|(?=[,\s\)\]}}]))", escaped = escaped);
             if let Ok(re) = Regex::new(&pattern) {
@@ -182,7 +182,7 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
                     .to_string();
             }
         } else {
-            // Fragments ≥ 2 chars : remplacement avec limites de mot
+            // Fragments >= 2 chars: replacement with word boundaries
             let pattern = format!(r"\b{}\b", regex::escape(&pair.pseudo_fragment));
             if let Ok(re) = Regex::new(&pattern) {
                 result = re
@@ -192,7 +192,7 @@ pub fn restore_fragments(text: &str, mapping: &MappingTable) -> String {
         }
     }
 
-    // --- Restauration des valeurs protégées ---
+    // --- Restoration of protected values ---
     for (placeholder, original) in &placeholders {
         result = result.replace(placeholder, original);
     }
@@ -220,9 +220,9 @@ mod tests {
 
     #[test]
     fn test_decompose_ip_identical_octets_excluded() {
-        // Si un octet est identique, il n'est pas inclus
+        // If an octet is identical, it is not included
         let fragments = decompose_ip("172.0.84.3", "172.16.254.3");
-        assert_eq!(fragments.len(), 2); // seuls octets 2 et 3 diffèrent
+        assert_eq!(fragments.len(), 2); // only octets 2 and 3 differ
         assert_eq!(fragments[0].pseudo_fragment, "0");
         assert_eq!(fragments[1].pseudo_fragment, "84");
     }
@@ -259,14 +259,14 @@ mod tests {
             .insert("172.16.254.3", "10.0.84.12", PiiType::IpAddress)
             .unwrap();
 
-        // Texte après dé-pseudonymisation principale (IP complète déjà restaurée)
-        // mais les fragments analytiques contiennent encore les valeurs du pseudonyme
+        // Text after main de-pseudonymization (complete IP already restored)
+        // but analytical fragments still contain the pseudonym values
         let text = "L'adresse IP est 172.16.254.3. Premier octet: 10, deuxième: 84, classe du réseau: A";
         let result = restore_fragments(text, &mapping);
 
         assert!(result.contains("Premier octet: 172"));
         assert!(result.contains("deuxième: 254"));
-        // "10" dans "172.16.254.3" ne doit pas être touché (pas isolé comme mot)
+        // "10" in "172.16.254.3" must not be touched (not isolated as a word)
         assert!(result.contains("172.16.254.3"));
     }
 
@@ -313,7 +313,7 @@ mod tests {
         let text = "L'email est jean@acme.fr et paul est mentionné";
         let result = restore_fragments(text, &mapping);
 
-        // Aucun remplacement de fragments pour les emails
+        // No fragment replacement for emails
         assert_eq!(result, text);
     }
 
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn test_ambiguous_fragments_skipped() {
         let mapping = MappingTable::new();
-        // Deux IPs avec le même octet pseudo "10" mais des originaux différents
+        // Two IPs with the same pseudo octet "10" but different originals
         mapping
             .insert("192.168.1.1", "10.0.50.20", PiiType::IpAddress)
             .unwrap();
@@ -336,18 +336,18 @@ mod tests {
             .insert("172.16.0.1", "10.0.60.30", PiiType::IpAddress)
             .unwrap();
 
-        // Le fragment "10" mappe vers "192" ET "172" → ambigu, on ne touche pas
+        // The fragment "10" maps to "192" AND "172" -> ambiguous, do not touch
         let text = "Octet: 10";
         let result = restore_fragments(text, &mapping);
 
-        // "10" ne doit PAS être remplacé car ambigu
+        // "10" must NOT be replaced because it is ambiguous
         assert!(result.contains("10"));
     }
 
     #[test]
     fn test_restored_email_not_corrupted_by_fragments() {
         let mapping = MappingTable::new();
-        // Un email avec chars spéciaux + une IP dans le même mapping
+        // An email with special chars + an IP in the same mapping
         mapping
             .insert(
                 "o'brien+newsletter@hyphen-domain.co.uk",
@@ -359,20 +359,20 @@ mod tests {
             .insert("85.123.45.67", "10.0.84.12", PiiType::IpAddress)
             .unwrap();
 
-        // Après dé-pseudonymisation principale, les deux valeurs sont restaurées
-        // Le fragment restorer ne doit PAS corrompre l'email restauré
+        // After main de-pseudonymization, both values are restored
+        // The fragment restorer must NOT corrupt the restored email
         let text = "Contact: o'brien+newsletter@hyphen-domain.co.uk, IP: 85.123.45.67, octet: 10";
         let result = restore_fragments(text, &mapping);
 
-        // L'email doit être intact
+        // The email must be intact
         assert!(
             result.contains("o'brien+newsletter@hyphen-domain.co.uk"),
             "L'email restauré a été corrompu : {}",
             result
         );
-        // L'IP doit être intacte
+        // The IP must be intact
         assert!(result.contains("85.123.45.67"));
-        // Le fragment isolé doit être remplacé
+        // The isolated fragment must be replaced
         assert!(result.contains("octet: 85"));
     }
 
@@ -383,8 +383,8 @@ mod tests {
             .insert("172.16.254.3", "10.0.84.12", PiiType::IpAddress)
             .unwrap();
 
-        // L'IP complète restaurée ne doit pas être corrompue par le remplacement
-        // de ses propres fragments pseudo
+        // The fully restored IP must not be corrupted by the replacement
+        // of its own pseudo fragments
         let text = "IP: 172.16.254.3, analyse: premier=10, troisième=84";
         let result = restore_fragments(text, &mapping);
 

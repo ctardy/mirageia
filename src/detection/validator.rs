@@ -1,14 +1,14 @@
-/// Algorithmes de validation PII portés depuis Presidio et detect-secrets.
-/// Pur Rust, zéro dépendance externe.
-/// Validation IBAN par algorithme MOD-97 (ISO 13616).
-/// Source : Presidio IbanRecognizer + Wikipedia MOD-97-10
+/// PII validation algorithms ported from Presidio and detect-secrets.
+/// Pure Rust, zero external dependencies.
+/// IBAN validation using MOD-97 algorithm (ISO 13616).
+/// Source: Presidio IbanRecognizer + Wikipedia MOD-97-10
 pub fn iban_valid(iban: &str) -> bool {
     let iban = iban.replace([' ', '-'], "").to_uppercase();
     if iban.len() < 15 || iban.len() > 34 {
         return false;
     }
 
-    // Vérifier que les 2 premiers chars sont des lettres et les 2 suivants des chiffres
+    // Verify that the first 2 chars are letters and the next 2 are digits
     let chars: Vec<char> = iban.chars().collect();
     if !chars[0].is_ascii_alphabetic() || !chars[1].is_ascii_alphabetic() {
         return false;
@@ -17,10 +17,10 @@ pub fn iban_valid(iban: &str) -> bool {
         return false;
     }
 
-    // Déplacer les 4 premiers chars à la fin
+    // Move the first 4 chars to the end
     let rearranged = format!("{}{}", &iban[4..], &iban[..4]);
 
-    // Remplacer les lettres par des chiffres (A=10, B=11, ..., Z=35)
+    // Replace letters with digits (A=10, B=11, ..., Z=35)
     let numeric: String = rearranged
         .chars()
         .map(|c| {
@@ -32,7 +32,7 @@ pub fn iban_valid(iban: &str) -> bool {
         })
         .collect();
 
-    // Calcul MOD-97 par blocs de 9 chiffres pour éviter overflow u64
+    // MOD-97 computation in blocks of 9 digits to avoid u64 overflow
     let mut remainder: u64 = 0;
     for c in numeric.chars() {
         if let Some(d) = c.to_digit(10) {
@@ -46,8 +46,8 @@ pub fn iban_valid(iban: &str) -> bool {
     remainder == 1
 }
 
-/// Validation carte bancaire par algorithme de Luhn (ISO/IEC 7812).
-/// Source : Presidio CreditCardRecognizer
+/// Credit card validation using Luhn algorithm (ISO/IEC 7812).
+/// Source: Presidio CreditCardRecognizer
 pub fn luhn_valid(s: &str) -> bool {
     let digits: Vec<u32> = s
         .chars()
@@ -76,9 +76,9 @@ pub fn luhn_valid(s: &str) -> bool {
     sum.is_multiple_of(10)
 }
 
-/// Entropie de Shannon d'une chaîne (bits par caractère).
-/// Utilisé pour détecter les mots de passe et secrets à haute entropie.
-/// Un mot de passe fort a généralement une entropie > 3.5 bits.
+/// Shannon entropy of a string (bits per character).
+/// Used to detect passwords and secrets with high entropy.
+/// A strong password typically has entropy > 3.5 bits.
 pub fn shannon_entropy(s: &str) -> f64 {
     if s.is_empty() {
         return 0.0;
@@ -97,8 +97,8 @@ pub fn shannon_entropy(s: &str) -> f64 {
         .sum::<f64>()
 }
 
-/// Détecte si une chaîne ressemble à un mot de passe ou secret :
-/// entropie élevée + longueur suffisante + caractères mixtes.
+/// Detects whether a string looks like a password or secret:
+/// high entropy + sufficient length + mixed characters.
 pub fn looks_like_secret(s: &str) -> bool {
     if s.len() < 12 {
         return false;
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_iban_invalid_checksum() {
-        assert!(!iban_valid("FR7630006000011234567890188")); // dernier chiffre modifié
+        assert!(!iban_valid("FR7630006000011234567890188")); // last digit modified
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_luhn_invalid() {
-        assert!(!luhn_valid("4111111111111112")); // dernier chiffre modifié
+        assert!(!luhn_valid("4111111111111112")); // last digit modified
     }
 
     #[test]
@@ -190,7 +190,7 @@ mod tests {
         assert!(!luhn_valid("411111111"));
     }
 
-    // ─── Entropie / secrets ──────────────────────────────────────
+    // ─── Entropy / secrets ───────────────────────────────────────
 
     #[test]
     fn test_entropy_low_for_simple() {

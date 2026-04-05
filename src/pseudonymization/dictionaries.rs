@@ -1,4 +1,4 @@
-/// Dictionnaires embarqués dans le binaire pour la génération de pseudonymes.
+/// Dictionaries embedded in the binary for pseudonym generation.
 pub struct Dictionaries {
     pub firstnames: Vec<String>,
     pub lastnames: Vec<String>,

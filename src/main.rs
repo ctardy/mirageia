@@ -3,7 +3,7 @@ use mirageia::config::AppConfig;
 use mirageia::proxy;
 
 #[derive(Parser)]
-#[command(name = "mirageia", version, about = "Proxy de pseudonymisation intelligent pour API LLM")]
+#[command(name = "mirageia", version, about = "Intelligent pseudonymization proxy for LLM APIs")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -11,59 +11,59 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Lancer le proxy HTTP (comportement par défaut)
+    /// Start the HTTP proxy (default behavior)
     Proxy {
-        /// Mode passthrough : relayer sans pseudonymiser
+        /// Passthrough mode: relay without pseudonymizing
         #[arg(long)]
         passthrough: bool,
     },
 
-    /// Assistant de configuration interactif
+    /// Interactive configuration wizard
     Setup,
 
-    /// Détecter les PII dans un texte (nécessite le modèle ONNX)
+    /// Detect PII in text (requires ONNX model)
     Detect {
-        /// Texte à analyser
+        /// Text to analyze
         text: String,
 
-        /// Nom du modèle dans ~/.mirageia/models/
+        /// Model name in ~/.mirageia/models/
         #[arg(short, long, default_value = "piiranha")]
         model: String,
     },
 
-    /// Lancer une commande avec le proxy activé (activation par session)
+    /// Run a command with the proxy enabled (per-session activation)
     Wrap {
-        /// Commande à exécuter (ex: claude, python, curl)
+        /// Command to execute (e.g., claude, python, curl)
         #[arg(trailing_var_arg = true, required = true)]
         command: Vec<String>,
 
-        /// Port du proxy MirageIA
+        /// MirageIA proxy port
         #[arg(short, long, default_value = "3100")]
         port: u16,
     },
 
-    /// Afficher les requêtes en temps réel (console de monitoring)
+    /// Display requests in real time (monitoring console)
     Console {
-        /// Adresse du proxy MirageIA
+        /// MirageIA proxy address
         #[arg(short, long, default_value = "http://127.0.0.1:3100")]
         addr: String,
     },
 
-    /// Vérifier et installer les mises à jour
+    /// Check and install updates
     Update {
-        /// Vérifier seulement, sans installer
+        /// Check only, without installing
         #[arg(long)]
         check: bool,
     },
 
-    /// Arrêter le proxy MirageIA en cours d'exécution
+    /// Stop the running MirageIA proxy
     Stop {
-        /// Adresse du proxy MirageIA
+        /// MirageIA proxy address
         #[arg(short, long, default_value = "http://127.0.0.1:3100")]
         addr: String,
     },
 
-    /// Gérer les modèles ONNX en cache (~/.mirageia/models/)
+    /// Manage cached ONNX models (~/.mirageia/models/)
     Model {
         #[command(subcommand)]
         action: ModelAction,
@@ -72,28 +72,28 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ModelAction {
-    /// Lister les modèles en cache
+    /// List cached models
     List,
 
-    /// Télécharger un modèle depuis HuggingFace
+    /// Download a model from HuggingFace
     Download {
-        /// Nom HuggingFace du modèle (ex: dslim/bert-base-NER)
+        /// HuggingFace model name (e.g., dslim/bert-base-NER)
         name: String,
     },
 
-    /// Définir le modèle actif
+    /// Set the active model
     Use {
-        /// Nom du modèle à activer
+        /// Name of the model to activate
         name: String,
     },
 
-    /// Supprimer un modèle du cache
+    /// Delete a model from cache
     Delete {
-        /// Nom du modèle à supprimer
+        /// Name of the model to delete
         name: String,
     },
 
-    /// Vérifier l'intégrité SHA-256 du modèle actif
+    /// Verify SHA-256 integrity of the active model
     Verify,
 }
 
@@ -136,25 +136,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             init_tracing(&config.log_level);
 
-            // Appliquer une mise à jour stagée si disponible
+            // Apply staged update if available
             if let Some(new_version) = mirageia::update::apply_staged_update() {
-                tracing::info!("MirageIA mis à jour vers v{} — relancez pour utiliser la nouvelle version", new_version);
+                tracing::info!("MirageIA updated to v{} — restart to use the new version", new_version);
                 eprintln!();
-                eprintln!("  ✓ MirageIA mis à jour vers v{}", new_version);
-                eprintln!("    Relancez MirageIA pour utiliser la nouvelle version.");
+                eprintln!("  ✓ MirageIA updated to v{}", new_version);
+                eprintln!("    Restart MirageIA to use the new version.");
                 eprintln!();
                 return Ok(());
             }
 
-            // Au premier lancement, proposer le setup si pas de config
+            // On first launch, suggest setup if no config exists
             if !config_exists() {
-                eprintln!("Première utilisation ? Lancez `mirageia setup` pour la configuration guidée.");
+                eprintln!("First time? Run `mirageia setup` for guided configuration.");
                 eprintln!();
             }
 
             tracing::info!("MirageIA v{}", env!("CARGO_PKG_VERSION"));
 
-            // Vérification de mise à jour en arrière-plan (silencieuse)
+            // Background update check (silent)
             mirageia::update::spawn_background_check();
 
             proxy::start_proxy(config).await?;
@@ -171,25 +171,25 @@ fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Erro
         ModelAction::List => {
             let models = model_manager::list_models();
             if models.is_empty() {
-                eprintln!("Aucun modèle en cache.");
-                eprintln!("Utilisez `mirageia model download <nom>` pour télécharger un modèle.");
+                eprintln!("No cached models.");
+                eprintln!("Use `mirageia model download <name>` to download a model.");
             } else {
-                eprintln!("Modèles en cache :");
+                eprintln!("Cached models:");
                 for (name, is_active) in &models {
-                    let marker = if *is_active { " ← actif" } else { "" };
+                    let marker = if *is_active { " <- active" } else { "" };
                     eprintln!("  {}{}", name, marker);
                 }
             }
         }
 
         ModelAction::Download { name } => {
-            eprintln!("Téléchargement du modèle '{}' depuis HuggingFace...", name);
+            eprintln!("Downloading model '{}' from HuggingFace...", name);
             match model_manager::ensure_model(&name) {
                 Ok(path) => {
-                    eprintln!("  ✓ Modèle téléchargé : {:?}", path);
+                    eprintln!("  ✓ Model downloaded: {:?}", path);
                 }
                 Err(e) => {
-                    eprintln!("  ✗ Échec : {}", e);
+                    eprintln!("  ✗ Failed: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -198,10 +198,10 @@ fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Erro
         ModelAction::Use { name } => {
             match model_manager::set_active_model(&name) {
                 Ok(()) => {
-                    eprintln!("  ✓ Modèle actif défini : {}", name);
+                    eprintln!("  ✓ Active model set: {}", name);
                 }
                 Err(e) => {
-                    eprintln!("  ✗ Échec : {}", e);
+                    eprintln!("  ✗ Failed: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -210,10 +210,10 @@ fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Erro
         ModelAction::Delete { name } => {
             match model_manager::delete_model(&name) {
                 Ok(()) => {
-                    eprintln!("  ✓ Modèle '{}' supprimé du cache", name);
+                    eprintln!("  ✓ Model '{}' deleted from cache", name);
                 }
                 Err(e) => {
-                    eprintln!("  ✗ Échec : {}", e);
+                    eprintln!("  ✗ Failed: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -223,22 +223,22 @@ fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Erro
             let active = model_manager::get_active_model();
             match active {
                 None => {
-                    eprintln!("Aucun modèle actif configuré.");
-                    eprintln!("Utilisez `mirageia model use <nom>` pour en définir un.");
+                    eprintln!("No active model configured.");
+                    eprintln!("Use `mirageia model use <name>` to set one.");
                     std::process::exit(1);
                 }
                 Some(name) => {
-                    eprintln!("Vérification du modèle actif '{}'...", name);
+                    eprintln!("Verifying active model '{}'...", name);
                     match model_manager::verify_model(&name) {
                         Ok(true) => {
-                            eprintln!("  ✓ Intégrité vérifiée");
+                            eprintln!("  ✓ Integrity verified");
                         }
                         Ok(false) => {
-                            eprintln!("  ✗ Modèle absent ou corrompu");
+                            eprintln!("  ✗ Model missing or corrupted");
                             std::process::exit(1);
                         }
                         Err(e) => {
-                            eprintln!("  ✗ Erreur de vérification : {}", e);
+                            eprintln!("  ✗ Verification error: {}", e);
                             std::process::exit(1);
                         }
                     }
@@ -269,47 +269,47 @@ async fn run_stop(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     match client.post(format!("{}/shutdown", addr)).send().await {
         Ok(resp) if resp.status().is_success() => {
-            eprintln!("  ✓ MirageIA arrêté");
+            eprintln!("  ✓ MirageIA stopped");
         }
         Ok(resp) => {
-            eprintln!("  ✗ Réponse inattendue : {}", resp.status());
+            eprintln!("  ✗ Unexpected response: {}", resp.status());
             std::process::exit(1);
         }
         Err(_) => {
-            eprintln!("  ✗ MirageIA ne répond pas sur {}", addr);
-            eprintln!("    Le proxy n'est peut-être pas en cours d'exécution.");
+            eprintln!("  ✗ MirageIA not responding on {}", addr);
+            eprintln!("    The proxy may not be running.");
             std::process::exit(1);
         }
     }
     Ok(())
 }
 
-/// Lance une commande enfant avec les variables d'environnement pointant vers le proxy.
+/// Launches a child command with environment variables pointing to the proxy.
 async fn run_wrap(command: Vec<String>, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let proxy_url = format!("http://127.0.0.1:{}", port);
 
-    // Vérifier que le proxy tourne
+    // Check that the proxy is running
     match reqwest::get(&format!("{}/health", proxy_url)).await {
         Ok(resp) if resp.status().is_success() => {
             let health: serde_json::Value = resp.json().await?;
             let mode = if health["passthrough"].as_bool().unwrap_or(false) {
                 "passthrough"
             } else {
-                "pseudonymisation"
+                "pseudonymization"
             };
-            eprintln!("  ✓ MirageIA actif sur {} (mode {})", proxy_url, mode);
+            eprintln!("  ✓ MirageIA active on {} (mode {})", proxy_url, mode);
         }
         _ => {
-            eprintln!("  ✗ MirageIA ne répond pas sur {}", proxy_url);
-            eprintln!("    Lancez d'abord : mirageia");
+            eprintln!("  ✗ MirageIA not responding on {}", proxy_url);
+            eprintln!("    Start it first: mirageia");
             std::process::exit(1);
         }
     }
 
-    let (program, args) = command.split_first().expect("Commande vide");
+    let (program, args) = command.split_first().expect("Empty command");
 
     eprintln!(
-        "  → Lancement de '{}' avec proxy MirageIA activé",
+        "  -> Launching '{}' with MirageIA proxy enabled",
         command.join(" ")
     );
     eprintln!();
@@ -326,18 +326,18 @@ async fn run_wrap(command: Vec<String>, port: u16) -> Result<(), Box<dyn std::er
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Se connecte au flux SSE /events du proxy et affiche les événements en temps réel.
+/// Connects to the proxy's /events SSE stream and displays events in real time.
 async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let events_url = format!("{}/events", addr);
 
-    // Vérifier que le proxy tourne
+    // Check that the proxy is running
     match reqwest::get(&format!("{}/health", addr)).await {
         Ok(resp) if resp.status().is_success() => {
             let health: serde_json::Value = resp.json().await?;
             let mode = if health["passthrough"].as_bool().unwrap_or(false) {
                 "PASSTHROUGH"
             } else {
-                "PSEUDONYMISATION"
+                "PSEUDONYMIZATION"
             };
             let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
             let version = health["version"].as_str().unwrap_or("?");
@@ -350,17 +350,17 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("  Mode       : {}", mode);
             eprintln!("  Mappings   : {}", mappings);
             eprintln!();
-            eprintln!("  En attente de requêtes... (Ctrl+C pour quitter)");
-            eprintln!("  ─────────────────────────────────────────────────");
+            eprintln!("  Waiting for requests... (Ctrl+C to quit)");
+            eprintln!("  -------------------------------------------------");
         }
         _ => {
-            eprintln!("  ✗ MirageIA ne répond pas sur {}", addr);
-            eprintln!("    Lancez d'abord : mirageia");
+            eprintln!("  ✗ MirageIA not responding on {}", addr);
+            eprintln!("    Start it first: mirageia");
             std::process::exit(1);
         }
     }
 
-    // Se connecter au flux SSE
+    // Connect to SSE stream
     let response = reqwest::get(&events_url).await?;
     let mut stream = response.bytes_stream();
 
@@ -371,7 +371,7 @@ async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
         let chunk = chunk?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
-        // Traiter chaque événement SSE complet
+        // Process each complete SSE event
         while let Some(pos) = buffer.find("\n\n") {
             let event = buffer[..pos].to_string();
             buffer = buffer[pos + 2..].to_string();
@@ -423,12 +423,12 @@ fn print_event(event: &serde_json::Value) {
         })
         .unwrap_or_default();
 
-    let is_request = direction == "→";
+    let is_request = direction == "\u{2192}";
 
     let dir_colored = if is_request {
-        format!("\x1b[36m{}\x1b[0m", direction) // cyan pour requête
+        format!("\x1b[36m{}\x1b[0m", direction) // cyan for request
     } else {
-        format!("\x1b[32m{}\x1b[0m", direction) // vert pour réponse
+        format!("\x1b[32m{}\x1b[0m", direction) // green for response
     };
 
     let mode = if passthrough {
@@ -438,7 +438,7 @@ fn print_event(event: &serde_json::Value) {
     };
 
     if is_request {
-        // Ligne requête : direction, mode, provider, path, modèle, taille
+        // Request line: direction, mode, provider, path, model, size
         let model_str = model
             .map(|m| format!("  \x1b[94m{}\x1b[0m", m))
             .unwrap_or_default();
@@ -453,21 +453,21 @@ fn print_event(event: &serde_json::Value) {
             timestamp, dir_colored, mode, provider, path, model_str, size_str
         );
 
-        // Sous-ligne PII si détectées
+        // PII sub-line if detected
         if pii_count > 0 && !pii_types.is_empty() {
             let types_str = pii_types.join(", ");
             eprintln!(
-                "           \x1b[33m├── {} PII : {}\x1b[0m",
+                "           \x1b[33m|-- {} PII: {}\x1b[0m",
                 pii_count, types_str
             );
         } else if pii_count > 0 {
             eprintln!(
-                "           \x1b[33m├── {} PII détectées\x1b[0m",
+                "           \x1b[33m|-- {} PII detected\x1b[0m",
                 pii_count
             );
         }
     } else {
-        // Ligne réponse : direction, status, provider, path, latence, streaming
+        // Response line: direction, status, provider, path, latency, streaming
         let status_str = match status_code {
             Some(code) if (200..300).contains(&code) => format!("\x1b[32m{}\x1b[0m", code),
             Some(code) if (400..500).contains(&code) => format!("\x1b[33m{}\x1b[0m", code),
@@ -494,16 +494,16 @@ fn print_event(event: &serde_json::Value) {
 fn run_detect(text: &str, model_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     use mirageia::detection::PiiDetector;
 
-    eprintln!("Chargement du modèle '{}'...", model_name);
+    eprintln!("Loading model '{}'...", model_name);
     let detector = PiiDetector::from_model_name(model_name)?;
 
-    eprintln!("Analyse du texte ({} caractères)...", text.len());
+    eprintln!("Analyzing text ({} characters)...", text.len());
     let entities = detector.detect(text)?;
 
     if entities.is_empty() {
-        println!("Aucune donnée sensible détectée.");
+        println!("No sensitive data detected.");
     } else {
-        println!("{} entité(s) détectée(s) :\n", entities.len());
+        println!("{} entity(ies) detected:\n", entities.len());
         for entity in &entities {
             println!("  {}", entity);
         }
@@ -514,7 +514,7 @@ fn run_detect(text: &str, model_name: &str) -> Result<(), Box<dyn std::error::Er
 
 #[cfg(not(feature = "onnx"))]
 fn run_detect(_text: &str, _model_name: &str) -> Result<(), Box<dyn std::error::Error>> {
-    eprintln!("Erreur : la détection PII nécessite la feature 'onnx'.");
-    eprintln!("Recompilez avec : cargo run --features onnx -- detect \"votre texte\"");
+    eprintln!("Error: PII detection requires the 'onnx' feature.");
+    eprintln!("Recompile with: cargo run --features onnx -- detect \"your text\"");
     std::process::exit(1);
 }

@@ -3,26 +3,26 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-/// Configuration complète de MirageIA.
+/// Full MirageIA configuration.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub listen_addr: String,
     pub anthropic_base_url: String,
     pub openai_base_url: String,
     pub log_level: String,
-    /// Termes à ne jamais pseudonymiser (noms publics, termes techniques, etc.).
+    /// Terms that should never be pseudonymized (public names, technical terms, etc.).
     pub whitelist: Vec<String>,
-    /// Confiance minimale pour la détection regex (0.0–1.0).
+    /// Minimum confidence threshold for regex detection (0.0-1.0).
     pub confidence_threshold: f32,
-    /// Ajouter le header X-MirageIA: active aux requêtes.
+    /// Add the X-MirageIA: active header to requests.
     pub add_header: bool,
-    /// Mode fail-open : si true, transmet la requête non modifiée en cas d'erreur.
+    /// Fail-open mode: if true, forwards the unmodified request on error.
     pub fail_open: bool,
-    /// Mode passthrough : si true, le proxy relaie sans pseudonymiser.
+    /// Passthrough mode: if true, the proxy relays without pseudonymizing.
     pub passthrough: bool,
 }
 
-/// Structure du fichier config.toml (désérialisable).
+/// Structure of the config.toml file (deserializable).
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct FileConfig {
@@ -70,11 +70,11 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
-    /// Charge la config : fichier TOML (si présent) → variables d'environnement → défauts.
+    /// Loads the config: TOML file (if present) -> environment variables -> defaults.
     pub fn load() -> Self {
         let mut config = Self::default();
 
-        // 1. Charger le fichier config.toml s'il existe
+        // 1. Load the config.toml file if it exists
         if let Some(file_config) = Self::load_config_file() {
             if let Some(addr) = file_config.proxy.listen_addr {
                 config.listen_addr = addr;
@@ -98,7 +98,7 @@ impl AppConfig {
                 config.passthrough = pt;
             }
             if !file_config.detection.whitelist.is_empty() {
-                // Fusionner avec la whitelist par défaut (loopback, etc.)
+                // Merge with the default whitelist (loopback, etc.)
                 for term in file_config.detection.whitelist {
                     if !config.whitelist.iter().any(|w| w.eq_ignore_ascii_case(&term)) {
                         config.whitelist.push(term);
@@ -110,7 +110,7 @@ impl AppConfig {
             }
         }
 
-        // 2. Les variables d'environnement prennent le dessus
+        // 2. Environment variables take precedence
         if let Ok(addr) = env::var("MIRAGEIA_LISTEN_ADDR") {
             config.listen_addr = addr;
         }
@@ -130,12 +130,12 @@ impl AppConfig {
         config
     }
 
-    /// Alias pour compatibilité (utilisé dans main.rs).
+    /// Alias for compatibility (used in main.rs).
     pub fn from_env() -> Self {
         Self::load()
     }
 
-    /// Chemin du fichier de config : ~/.mirageia/config.toml
+    /// Path to the config file: ~/.mirageia/config.toml
     pub fn config_file_path() -> Option<PathBuf> {
         dirs::home_dir().map(|h| h.join(".mirageia").join("config.toml"))
     }

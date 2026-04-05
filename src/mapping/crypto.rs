@@ -4,8 +4,8 @@ use zeroize::Zeroize;
 
 use crate::mapping::error::MappingError;
 
-/// Moteur de chiffrement AES-256-GCM pour protéger les valeurs originales en mémoire.
-/// La clé est générée aléatoirement au démarrage et zéroïsée à la destruction.
+/// AES-256-GCM encryption engine to protect original values in memory.
+/// The key is randomly generated at startup and zeroized on drop.
 pub struct CryptoEngine {
     key_bytes: [u8; 32],
 }
@@ -17,7 +17,7 @@ impl Default for CryptoEngine {
 }
 
 impl CryptoEngine {
-    /// Génère une nouvelle clé aléatoire.
+    /// Generates a new random key.
     pub fn new() -> Self {
         let key = Aes256Gcm::generate_key(OsRng);
         let mut key_bytes = [0u8; 32];
@@ -25,7 +25,7 @@ impl CryptoEngine {
         Self { key_bytes }
     }
 
-    /// Chiffre une valeur. Retourne nonce (12 bytes) + ciphertext concaténés.
+    /// Encrypts a value. Returns nonce (12 bytes) + ciphertext concatenated.
     pub fn encrypt(&self, plaintext: &str) -> Result<Vec<u8>, MappingError> {
         let key = Key::<Aes256Gcm>::from_slice(&self.key_bytes);
         let cipher = Aes256Gcm::new(key);
@@ -42,7 +42,7 @@ impl CryptoEngine {
         Ok(result)
     }
 
-    /// Déchiffre une valeur (nonce + ciphertext concaténés).
+    /// Decrypts a value (nonce + ciphertext concatenated).
     pub fn decrypt(&self, data: &[u8]) -> Result<String, MappingError> {
         if data.len() < 12 {
             return Err(MappingError::Decryption(
@@ -93,12 +93,12 @@ mod tests {
         let enc1 = engine.encrypt(plaintext).unwrap();
         let enc2 = engine.encrypt(plaintext).unwrap();
 
-        // Les nonces (12 premiers bytes) doivent être différents
+        // The nonces (first 12 bytes) must be different
         assert_ne!(&enc1[..12], &enc2[..12]);
-        // Les ciphertexts aussi (car nonces différents)
+        // The ciphertexts too (because nonces are different)
         assert_ne!(enc1, enc2);
 
-        // Mais les deux déchiffrent vers le même texte
+        // But both decrypt to the same text
         assert_eq!(engine.decrypt(&enc1).unwrap(), plaintext);
         assert_eq!(engine.decrypt(&enc2).unwrap(), plaintext);
     }

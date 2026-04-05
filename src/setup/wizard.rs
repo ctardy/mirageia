@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use dialoguer::{Confirm, Input, MultiSelect, theme::ColorfulTheme};
 
-/// Résultat de l'assistant de configuration.
+/// Result of the configuration wizard.
 #[derive(Debug)]
 pub struct SetupResult {
     pub listen_port: u16,
@@ -23,31 +23,31 @@ pub struct LlmProvider {
     pub api_key_detected: bool,
 }
 
-/// Lance l'assistant de configuration interactif.
+/// Launches the interactive configuration wizard.
 pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     let theme = ColorfulTheme::default();
 
     println!();
     println!("  ╔══════════════════════════════════════════╗");
-    println!("  ║  MirageIA — Assistant de configuration   ║");
-    println!("  ╚════��════════════════���════════════════════╝");
+    println!("  ║  MirageIA — Configuration Wizard         ║");
+    println!("  ╚══════════════════════════════════════════╝");
     println!();
 
-    // --- Étape 1 : Détection de l'environnement ---
+    // --- Step 1: Environment detection ---
     let os_name = detect_os();
     let shell_name = detect_shell();
-    println!("  Système détecté : {} ({})", os_name, shell_name);
+    println!("  Detected system: {} ({})", os_name, shell_name);
     println!();
 
-    // --- ��tape 2 : Choix du port ---
+    // --- Step 2: Port selection ---
     let listen_port: u16 = Input::with_theme(&theme)
-        .with_prompt("Port d'écoute du proxy")
+        .with_prompt("Proxy listening port")
         .default(3100)
         .interact_text()?;
 
     println!();
 
-    // --- Étape 3 : Choix des providers LLM ---
+    // --- Step 3: LLM provider selection ---
     let provider_options = [("Anthropic (Claude)", "https://api.anthropic.com", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
         ("OpenAI (GPT)", "https://api.openai.com", "OPENAI_BASE_URL", "OPENAI_API_KEY"),
         ("Google Gemini", "https://generativelanguage.googleapis.com", "GEMINI_BASE_URL", "GEMINI_API_KEY"),
@@ -58,29 +58,29 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
         .map(|(name, _, _, key_var)| {
             let detected = env::var(key_var).is_ok();
             if detected {
-                format!("{} ✓ clé API détectée", name)
+                format!("{} ✓ API key detected", name)
             } else {
                 name.to_string()
             }
         })
         .collect();
 
-    // Pré-sélectionner les providers dont la clé API est détectée
+    // Pre-select providers whose API key is detected
     let defaults: Vec<bool> = provider_options
         .iter()
         .map(|(_, _, _, key_var)| env::var(key_var).is_ok())
         .collect();
 
     let selected = MultiSelect::with_theme(&theme)
-        .with_prompt("Quels providers LLM utilisez-vous ? (Espace pour sélectionner, Entrée pour valider)")
+        .with_prompt("Which LLM providers do you use? (Space to select, Enter to confirm)")
         .items(&display_options)
         .defaults(&defaults)
         .interact()?;
 
     if selected.is_empty() {
         println!();
-        println!("  ⚠ Aucun provider sélectionné. Vous pourrez configurer manuellement plus tard.");
-        println!("    Fichier : ~/.mirageia/config.toml");
+        println!("  ⚠ No provider selected. You can configure manually later.");
+        println!("    File: ~/.mirageia/config.toml");
     }
 
     let providers: Vec<LlmProvider> = selected
@@ -99,16 +99,16 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Étape 4 : Whitelist ---
+    // --- Step 4: Whitelist ---
     let add_whitelist = Confirm::with_theme(&theme)
-        .with_prompt("Ajouter des termes à ne jamais pseudonymiser (whitelist) ?")
+        .with_prompt("Add terms to never pseudonymize (whitelist)?")
         .default(false)
         .interact()?;
 
     let mut whitelist = vec!["localhost".to_string(), "127.0.0.1".to_string()];
 
     if add_whitelist {
-        println!("  Entrez les termes séparés par des virgules (ex: Thomas Edison, Martin Fowler)");
+        println!("  Enter terms separated by commas (e.g., Thomas Edison, Martin Fowler)");
         let input: String = Input::with_theme(&theme)
             .with_prompt("Whitelist")
             .default(String::new())
@@ -125,9 +125,9 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Étape 5 : Générer la configuration ---
+    // --- Step 5: Generate configuration ---
     let config_dir = dirs::home_dir()
-        .expect("Impossible de trouver le répertoire home")
+        .expect("Cannot find home directory")
         .join(".mirageia");
 
     fs::create_dir_all(&config_dir)?;
@@ -138,30 +138,30 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     if config_path.exists() {
         let overwrite = Confirm::with_theme(&theme)
             .with_prompt(format!(
-                "{} existe déjà. Écraser ?",
+                "{} already exists. Overwrite?",
                 config_path.display()
             ))
             .default(false)
             .interact()?;
 
         if !overwrite {
-            println!("  Configuration conservée.");
+            println!("  Configuration preserved.");
             println!();
         } else {
             fs::write(&config_path, &config_content)?;
-            println!("  ✓ Configuration écrite dans {}", config_path.display());
+            println!("  ✓ Configuration written to {}", config_path.display());
         }
     } else {
         fs::write(&config_path, &config_content)?;
-        println!("  ✓ Configuration écrite dans {}", config_path.display());
+        println!("  ✓ Configuration written to {}", config_path.display());
     }
 
     println!();
 
-    // --- Étape 6 : Configurer le shell ---
+    // --- Step 6: Shell configuration ---
     let shell_configured = configure_shell(&theme, listen_port, &providers, &shell_name)?;
 
-    // --- Résumé ---
+    // --- Summary ---
     print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured);
 
     Ok(SetupResult {
@@ -203,14 +203,14 @@ fn detect_shell() -> String {
         return "Git Bash".to_string();
     }
 
-    "inconnu".to_string()
+    "unknown".to_string()
 }
 
 fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -> String {
     let mut config = String::new();
 
-    config.push_str("# Configuration MirageIA\n");
-    config.push_str("# Généré par `mirageia setup`\n\n");
+    config.push_str("# MirageIA Configuration\n");
+    config.push_str("# Generated by `mirageia setup`\n\n");
 
     config.push_str("[proxy]\n");
     config.push_str(&format!("listen_addr = \"127.0.0.1:{}\"\n", port));
@@ -218,14 +218,14 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -
     config.push_str("fail_open = true\n");
     config.push('\n');
 
-    // URLs des providers
+    // Provider URLs
     for provider in providers {
         let key = match provider.name.as_str() {
             n if n.contains("Anthropic") => "anthropic_base_url",
             n if n.contains("OpenAI") => "openai_base_url",
-            _ => continue, // Les autres providers ne sont pas encore supportés dans le routeur
+            _ => continue, // Other providers not yet supported in the router
         };
-        config.push_str(&format!("# {} — URL par défaut, pas besoin de changer\n", provider.name));
+        config.push_str(&format!("# {} — default URL, no need to change\n", provider.name));
         config.push_str(&format!("# {} = \"{}\"\n", key, provider.base_url));
     }
 
@@ -254,7 +254,7 @@ fn configure_shell(
         return Ok(false);
     }
 
-    // Construire les lignes d'export
+    // Build export lines
     let mut export_lines = Vec::new();
     for provider in providers {
         export_lines.push(format!(
@@ -263,14 +263,14 @@ fn configure_shell(
         ));
     }
 
-    println!("  Pour rediriger vos outils vers MirageIA, ajoutez ces lignes à votre shell :");
+    println!("  To redirect your tools through MirageIA, add these lines to your shell:");
     println!();
     for line in &export_lines {
         println!("    {}", line);
     }
     println!();
 
-    // Trouver le fichier de profil
+    // Find the profile file
     let profile_path = match shell_name {
         "zsh" => dirs::home_dir().map(|h| h.join(".zshrc")),
         "bash" | "Git Bash" => dirs::home_dir().map(|h| h.join(".bashrc")),
@@ -281,7 +281,7 @@ fn configure_shell(
     if let Some(profile) = profile_path {
         let auto_configure = Confirm::with_theme(theme)
             .with_prompt(format!(
-                "Ajouter automatiquement à {} ?",
+                "Add automatically to {}?",
                 profile.display()
             ))
             .default(true)
@@ -290,25 +290,25 @@ fn configure_shell(
         if auto_configure {
             let mut content = fs::read_to_string(&profile).unwrap_or_default();
 
-            // Vérifier si déjà configuré
+            // Check if already configured
             if content.contains("MIRAGEIA") || content.contains(&format!("localhost:{}", port)) {
-                println!("  ⚠ Configuration MirageIA déjà présente dans {}", profile.display());
+                println!("  ⚠ MirageIA configuration already present in {}", profile.display());
                 return Ok(true);
             }
 
-            content.push_str("\n# MirageIA — proxy de pseudonymisation LLM\n");
+            content.push_str("\n# MirageIA — LLM pseudonymization proxy\n");
             for line in &export_lines {
                 content.push_str(line);
                 content.push('\n');
             }
 
             fs::write(&profile, content)?;
-            println!("  ✓ {} mis à jour", profile.display());
-            println!("  ⚠ Rechargez votre shell : source {}", profile.display());
+            println!("  ✓ {} updated", profile.display());
+            println!("  ⚠ Reload your shell: source {}", profile.display());
             return Ok(true);
         }
     } else {
-        println!("  Shell '{}' — ajoutez les lignes manuellement.", shell_name);
+        println!("  Shell '{}' — add the lines manually.", shell_name);
     }
 
     Ok(false)
@@ -322,11 +322,11 @@ fn print_summary(
     shell_configured: bool,
 ) {
     println!();
-    println!("  ╔═══════════════════════���══════════════════╗");
-    println!("  ║  Configuration terminée !                ║");
-    println!("  ╚═════════��══════════════════���═════════════╝");
+    println!("  ╔══════════════════════════════════════════╗");
+    println!("  ║  Configuration complete!                 ║");
+    println!("  ╚══════════════════════════════════════════╝");
     println!();
-    println!("  Résumé :");
+    println!("  Summary:");
     println!("    Proxy           : http://127.0.0.1:{}", port);
     println!("    Config          : {}", config_path.display());
 
@@ -340,23 +340,23 @@ fn print_summary(
             .collect();
 
         if !missing_keys.is_empty() {
-            println!("    ⚠ Clés manquantes : {}", missing_keys.join(", "));
+            println!("    ⚠ Missing keys  : {}", missing_keys.join(", "));
         }
     }
 
     if whitelist.len() > 2 {
-        // Plus que localhost et 127.0.0.1
-        println!("    Whitelist       : {} termes", whitelist.len());
+        // More than localhost and 127.0.0.1
+        println!("    Whitelist       : {} terms", whitelist.len());
     }
 
     if shell_configured {
-        println!("    Shell           : ✓ configuré");
+        println!("    Shell           : ✓ configured");
     } else {
-        println!("    Shell           : configuration manuelle requise");
+        println!("    Shell           : manual configuration required");
     }
 
     println!();
-    println!("  Pour démarrer MirageIA :");
+    println!("  To start MirageIA:");
     println!();
     println!("    mirageia");
     println!();
@@ -364,9 +364,9 @@ fn print_summary(
     if !providers.is_empty() {
         let missing: Vec<&LlmProvider> = providers.iter().filter(|p| !p.api_key_detected).collect();
         if !missing.is_empty() {
-            println!("  N'oubliez pas de configurer vos clés API :");
+            println!("  Don't forget to set your API keys:");
             for p in missing {
-                println!("    export {}=<votre-clé>", p.api_key_var);
+                println!("    export {}=<your-key>", p.api_key_var);
             }
             println!();
         }
@@ -381,7 +381,6 @@ mod tests {
     fn test_detect_os() {
         let os = detect_os();
         assert!(!os.is_empty());
-        // On tourne sur Windows dans ce projet
         #[cfg(target_os = "windows")]
         assert_eq!(os, "Windows");
     }

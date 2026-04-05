@@ -3,15 +3,15 @@ use regex::Regex;
 use crate::detection::types::{PiiEntity, PiiType};
 use crate::detection::validator::{iban_valid, luhn_valid};
 
-/// Détecteur de PII basé sur des regex + validation algorithmique (Luhn, MOD-97).
-/// Patterns inspirés de Presidio (MIT) et gitleaks (MIT).
-/// Détecte les PII à pattern fixe : emails, IPs, téléphones, CB, IBAN, clés API, secrets.
-/// Ne fait PAS de détection contextuelle (noms de personnes, etc.).
+/// Regex-based PII detector with algorithmic validation (Luhn, MOD-97).
+/// Patterns inspired by Presidio (MIT) and gitleaks (MIT).
+/// Detects fixed-pattern PII: emails, IPs, phone numbers, credit cards, IBAN, API keys, secrets.
+/// Does NOT perform contextual detection (person names, etc.).
 #[allow(clippy::type_complexity)]
 pub struct RegexDetector {
-    /// Patterns sans validation post-regex.
+    /// Patterns without post-regex validation.
     patterns: Vec<(PiiType, Regex)>,
-    /// Patterns nécessitant une validation algorithmique après le match.
+    /// Patterns requiring algorithmic validation after the match.
     validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)>,
 }
 
@@ -23,13 +23,13 @@ impl Default for RegexDetector {
 
 impl RegexDetector {
     pub fn new() -> Self {
-        // Patterns simples (regex suffit)
-        // ORDRE IMPORTANT : les patterns spécifiques (API keys) en premier,
-        // les patterns génériques (téléphone, etc.) en dernier.
-        // Ainsi, si une clé API contient des chiffres, le téléphone ne surpasse pas la clé.
+        // Simple patterns (regex is sufficient)
+        // ORDER MATTERS: specific patterns (API keys) first,
+        // generic patterns (phone, etc.) last.
+        // This way, if an API key contains digits, the phone pattern does not override the key.
         let patterns = vec![
-            // ─── Clés API / tokens — patterns gitleaks (MIT) ─────────────────
-            // Anthropic API keys (sk-ant-) — spécifique, en premier
+            // ─── API keys / tokens — gitleaks patterns (MIT) ─────────────────
+            // Anthropic API keys (sk-ant-) — specific, first
             (
                 PiiType::ApiKey,
                 Regex::new(r"\bsk-ant-[a-zA-Z0-9\-_]{40,}\b").unwrap(),
@@ -64,12 +64,12 @@ impl RegexDetector {
                 PiiType::ApiKey,
                 Regex::new(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b").unwrap(),
             ),
-            // Clés génériques (sk-, pk-, api-, token-, bearer)
+            // Generic keys (sk-, pk-, api-, token-, bearer)
             (
                 PiiType::ApiKey,
                 Regex::new(r"\b(?:sk|pk|api|token|bearer)[-_][a-zA-Z0-9_\-\.]{16,}\b").unwrap(),
             ),
-            // ─── Patterns génériques (en dernier, ignorés si chevauchement) ──
+            // ─── Generic patterns (last, ignored if overlap) ──
             // Emails
             (
                 PiiType::Email,
@@ -80,35 +80,35 @@ impl RegexDetector {
                 PiiType::IpAddress,
                 Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
             ),
-            // IPv6 (simplifié)
+            // IPv6 (simplified)
             (
                 PiiType::IpAddress,
                 Regex::new(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b").unwrap(),
             ),
-            // Téléphones français
+            // French phone numbers
             (
                 PiiType::PhoneNumber,
                 Regex::new(r"(?:\+33|0)\s?[1-9](?:[\s.-]?\d{2}){4}").unwrap(),
             ),
-            // Numéro de sécurité sociale français
+            // French social security number
             (
                 PiiType::NationalId,
                 Regex::new(r"\b[12]\s?\d{2}\s?\d{2}\s?\d{2}\s?\d{3}\s?\d{3}\s?\d{2}\b").unwrap(),
             ),
         ];
 
-        // Patterns avec validation algorithmique post-regex
+        // Patterns with post-regex algorithmic validation
         #[allow(clippy::type_complexity)]
         let validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)> = vec![
-            // IBAN — regex large (tous pays) + validation MOD-97
-            // Source regex : Presidio IbanRecognizer (MIT)
+            // IBAN — broad regex (all countries) + MOD-97 validation
+            // Regex source: Presidio IbanRecognizer (MIT)
             (
                 PiiType::Iban,
                 Regex::new(r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b").unwrap(),
                 iban_valid,
             ),
-            // Cartes bancaires — regex large + validation Luhn
-            // Source regex : Presidio CreditCardRecognizer (MIT)
+            // Credit cards — broad regex + Luhn validation
+            // Regex source: Presidio CreditCardRecognizer (MIT)
             (
                 PiiType::CreditCard,
                 Regex::new(r"\b(?:4[0-9]{3}|5[1-5][0-9]{2}|3[47][0-9]{2}|6(?:011|5[0-9]{2}))[0-9 \-]{8,15}[0-9]\b").unwrap(),
@@ -119,7 +119,7 @@ impl RegexDetector {
         Self { patterns, validated_patterns }
     }
 
-    /// Détecte les PII dans un texte via regex, en excluant les termes de la whitelist.
+    /// Detects PII in text via regex, excluding whitelisted terms.
     pub fn detect_with_whitelist(&self, text: &str, whitelist: &[String]) -> Vec<PiiEntity> {
         let mut entities = self.detect(text);
         if !whitelist.is_empty() {
@@ -130,12 +130,12 @@ impl RegexDetector {
         entities
     }
 
-    /// Détecte les PII dans un texte via regex + validation algorithmique.
+    /// Detects PII in text via regex + algorithmic validation.
     pub fn detect(&self, text: &str) -> Vec<PiiEntity> {
         let mut entities = Vec::new();
 
-        // Patterns validés en premier (confiance 0.95) : IBAN, CB
-        // Ils ont priorité sur les patterns simples en cas de chevauchement
+        // Validated patterns first (confidence 0.95): IBAN, credit cards
+        // They take priority over simple patterns in case of overlap
         for (pii_type, regex, validator) in &self.validated_patterns {
             for mat in regex.find_iter(text) {
                 let matched = mat.as_str();
@@ -145,12 +145,12 @@ impl RegexDetector {
             }
         }
 
-        // Patterns simples (confiance 0.90) : ignorés si la zone chevauche une entité déjà détectée
+        // Simple patterns (confidence 0.90): ignored if the range overlaps an already detected entity
         for (pii_type, regex) in &self.patterns {
             for mat in regex.find_iter(text) {
                 let start = mat.start();
                 let end = mat.end();
-                // Ignorer si chevauchement avec une entité existante (ex: PHONE dans un IBAN)
+                // Skip if overlapping with an existing entity (e.g., PHONE inside an IBAN)
                 let overlaps = entities.iter().any(|e| start < e.end && end > e.start);
                 if !overlaps {
                     self.push_if_new(&mut entities, mat.as_str(), *pii_type, start, end, 0.90);
@@ -158,7 +158,7 @@ impl RegexDetector {
             }
         }
 
-        // Trier par position
+        // Sort by position
         entities.sort_by_key(|e| e.start);
         entities
     }
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn test_detect_ipv4_not_invalid() {
         let entities = detector().detect("Version 1.2.3");
-        // "1.2.3" n'est pas une IP valide (3 octets seulement)
+        // "1.2.3" is not a valid IP (only 3 octets)
         assert!(entities.is_empty());
     }
 
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn test_detect_iban() {
-        // IBAN FR valide (27 chars, MOD-97 = 1)
+        // Valid FR IBAN (27 chars, MOD-97 = 1)
         let entities = detector().detect("IBAN: FR7630006000011234567890189");
         let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
         assert_eq!(iban_entities.len(), 1);
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_iban_not_detected_as_phone() {
-        // Les chiffres d'un IBAN ne doivent pas être détectés comme numéro de téléphone
+        // Digits in an IBAN must not be detected as a phone number
         let entities = detector().detect("IBAN : FR7630006000011234567890189");
         let phone_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::PhoneNumber).collect();
         let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_detect_iban_invalid_checksum_ignored() {
-        // IBAN avec mauvais checksum MOD-97 → ne doit PAS être détecté
+        // IBAN with wrong MOD-97 checksum -> must NOT be detected
         let entities = detector().detect("IBAN: FR7630006000011234567890188");
         let iban_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Iban).collect();
         assert_eq!(iban_entities.len(), 0);
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_detect_credit_card_invalid_luhn_ignored() {
-        // Numéro qui ressemble à une CB mais Luhn invalide
+        // Number that looks like a credit card but has invalid Luhn
         let entities = detector().detect("CB: 4111 1111 1111 1112");
         let cc_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::CreditCard).collect();
         assert_eq!(cc_entities.len(), 0);
@@ -311,8 +311,8 @@ mod tests {
 
     #[test]
     fn test_detect_stripe_key() {
-        // Clé construite dynamiquement pour éviter les scanners de secrets GitHub
-        // Format : sk_(live|test)_<24+ chars alphanumériques>
+        // Key built dynamically to avoid GitHub secret scanners
+        // Format: sk_(live|test)_<24+ alphanumeric chars>
         let key = format!("STRIPE_KEY=sk{}live{}{}", "_", "_", "A1B2C3D4E5F6G7H8I9J0K1L2");
         let entities = detector().detect(&key);
         let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
@@ -371,7 +371,7 @@ mod tests {
             "Serveurs: 10.0.0.1 et 192.168.1.50",
             &whitelist,
         );
-        // 10.0.0.1 doit être exclu, 192.168.1.50 reste
+        // 10.0.0.1 must be excluded, 192.168.1.50 remains
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].text, "192.168.1.50");
     }
@@ -403,7 +403,7 @@ mod tests {
             "::1".to_string(),
         ];
 
-        // 127.0.0.1 doit être exclu, 85.123.45.67 doit être détecté
+        // 127.0.0.1 must be excluded, 85.123.45.67 must be detected
         let entities = detector().detect_with_whitelist(
             "Serveur prod: 85.123.45.67, loopback: 127.0.0.1",
             &whitelist,

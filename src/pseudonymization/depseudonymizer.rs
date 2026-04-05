@@ -3,16 +3,16 @@ use aho_corasick::AhoCorasick;
 use crate::mapping::MappingTable;
 use crate::pseudonymization::fragment_restorer::restore_fragments;
 
-/// Dé-pseudonymise un texte en remplaçant les pseudonymes par les valeurs originales.
+/// De-pseudonymizes a text by replacing pseudonyms with the original values.
 ///
-/// Deux passes :
-/// 1. **Remplacement principal** (AhoCorasick) : remplace les tokens complets
-///    (pseudonymes entiers → valeurs originales).
-/// 2. **Restauration de fragments** (SPB — Sub-PII Binding) : détecte et remplace
-///    les sous-parties de pseudonymes que le LLM a extraites dans son analyse
-///    (octets d'IP, groupes de chiffres CC, segments NSS, etc.).
+/// Two passes:
+/// 1. **Main replacement** (AhoCorasick): replaces complete tokens
+///    (whole pseudonyms -> original values).
+/// 2. **Fragment restoration** (SPB -- Sub-PII Binding): detects and replaces
+///    sub-parts of pseudonyms that the LLM extracted in its analysis
+///    (IP octets, CC digit groups, NSS segments, etc.).
 pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
-    let pairs = mapping.all_pseudonyms_sorted(); // triés par longueur décroissante
+    let pairs = mapping.all_pseudonyms_sorted(); // sorted by descending length
 
     if pairs.is_empty() {
         return text.to_string();
@@ -26,10 +26,10 @@ pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
         .build(&patterns)
         .expect("Erreur AhoCorasick");
 
-    // Passe 1 : remplacement des tokens complets
+    // Pass 1: replacement of complete tokens
     let result = ac.replace_all(text, &replacements);
 
-    // Passe 2 : restauration des fragments (SPB)
+    // Pass 2: fragment restoration (SPB)
     restore_fragments(&result, mapping)
 }
 
@@ -72,11 +72,11 @@ mod tests {
     #[test]
     fn test_depseudonymize_longest_first() {
         let mapping = MappingTable::new();
-        // "Michel Martin" et "Michel" sont tous les deux des pseudonymes
+        // "Michel Martin" and "Michel" are both pseudonyms
         mapping.insert("Jean-Pierre Dupont", "Michel Martin", PiiType::PersonName).unwrap();
         mapping.insert("Jean", "Michel", PiiType::GivenName).unwrap();
 
-        // "Michel Martin" doit être remplacé en entier, pas juste "Michel"
+        // "Michel Martin" must be replaced entirely, not just "Michel"
         let text = "Contact: Michel Martin";
         let result = depseudonymize_text(text, &mapping);
 
@@ -114,10 +114,10 @@ mod tests {
 
         let (pseudonymized, _) = pseudonymize_text(original, &entities, &mapping, &generator);
 
-        // Le texte pseudonymisé ne contient plus l'email original
+        // The pseudonymized text no longer contains the original email
         assert!(!pseudonymized.contains("jean@acme.fr"));
 
-        // La dé-pseudonymisation restaure l'original
+        // De-pseudonymization restores the original
         let restored = depseudonymize_text(&pseudonymized, &mapping);
         assert_eq!(restored, original);
     }

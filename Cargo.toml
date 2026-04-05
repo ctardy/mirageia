@@ -2,7 +2,7 @@
 name = "mirageia"
 version = "0.5.0"
 edition = "2021"
-description = "Proxy de pseudonymisation intelligent pour API LLM"
+description = "Intelligent pseudonymization proxy for LLM APIs"
 license = "MIT"
 
 [dependencies]
@@ -18,14 +18,14 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Phase 2 — Détection PII
+# Phase 2 — PII Detection
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 ndarray = "0.16"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 
-# Phase 3 — Pseudonymisation
+# Phase 3 — Pseudonymization
 async-stream = "0.3"
 aes-gcm = "0.10"
 aho-corasick = "1"

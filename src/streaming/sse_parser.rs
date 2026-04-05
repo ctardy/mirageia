@@ -1,20 +1,20 @@
 use crate::proxy::router::Provider;
 
-/// Événement SSE parsé.
+/// Parsed SSE event.
 #[derive(Debug, Clone)]
 pub struct SseEvent {
-    /// Type d'événement (ex: "content_block_delta", "message_start").
+    /// Event type (e.g. "content_block_delta", "message_start").
     pub event_type: Option<String>,
-    /// Données brutes de l'événement.
+    /// Raw event data.
     pub data: String,
-    /// Texte delta extrait (si c'est un événement contenant du texte).
+    /// Extracted text delta (if this is an event containing text).
     pub text_delta: Option<String>,
-    /// Indique si c'est le dernier événement du stream.
+    /// Indicates whether this is the last event in the stream.
     pub is_done: bool,
 }
 
-/// Parse un chunk SSE brut et extrait le texte delta.
-/// Un chunk SSE a le format :
+/// Parses a raw SSE chunk and extracts the text delta.
+/// An SSE chunk has the format:
 /// ```text
 /// event: content_block_delta
 /// data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Bonjour"}}
@@ -33,7 +33,7 @@ pub fn parse_sse_chunk(chunk: &str, provider: Provider) -> Option<SseEvent> {
 
     let data = data?;
 
-    // Vérifier si c'est le signal de fin
+    // Check if this is the end-of-stream signal
     if data == "[DONE]" {
         return Some(SseEvent {
             event_type,
@@ -43,7 +43,7 @@ pub fn parse_sse_chunk(chunk: &str, provider: Provider) -> Option<SseEvent> {
         });
     }
 
-    // Extraire le texte delta selon le provider
+    // Extract the text delta based on the provider
     let text_delta = extract_text_delta(&data, provider);
 
     Some(SseEvent {
@@ -54,20 +54,20 @@ pub fn parse_sse_chunk(chunk: &str, provider: Provider) -> Option<SseEvent> {
     })
 }
 
-/// Extrait le texte delta d'un événement SSE selon le provider.
+/// Extracts the text delta from an SSE event based on the provider.
 fn extract_text_delta(data: &str, provider: Provider) -> Option<String> {
     let json: serde_json::Value = serde_json::from_str(data).ok()?;
 
     match provider {
         Provider::Anthropic => {
-            // Format : {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+            // Format: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
             json.get("delta")
                 .and_then(|d| d.get("text"))
                 .and_then(|t| t.as_str())
                 .map(|s| s.to_string())
         }
         Provider::OpenAI => {
-            // Format : {"choices":[{"delta":{"content":"..."}}]}
+            // Format: {"choices":[{"delta":{"content":"..."}}]}
             json.get("choices")
                 .and_then(|c| c.get(0))
                 .and_then(|c| c.get("delta"))
@@ -78,7 +78,7 @@ fn extract_text_delta(data: &str, provider: Provider) -> Option<String> {
     }
 }
 
-/// Reconstruit un chunk SSE à partir d'un événement modifié.
+/// Rebuilds an SSE chunk from a modified event.
 pub fn rebuild_sse_chunk(event: &SseEvent, new_text: &str, provider: Provider) -> Option<String> {
     let mut json: serde_json::Value = serde_json::from_str(&event.data).ok()?;
 

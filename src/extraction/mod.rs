@@ -1,4 +1,4 @@
-/// Module d'extraction de texte depuis des blocs image/document dans les messages LLM.
+/// Text extraction module for image/document blocks in LLM messages.
 pub mod docx;
 pub mod pdf;
 
@@ -6,15 +6,15 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use crate::proxy::router::Provider;
 
-/// Prétraite les blocs media (image/document) dans un body JSON LLM.
+/// Preprocesses media blocks (image/document) in an LLM JSON body.
 ///
-/// Parcourt tous les blocs dans `messages[].content[]`, détecte les blocs de type
-/// "document" (PDF, DOCX) et les convertit en blocs `{"type": "text", "text": "..."}`.
+/// Iterates over all blocks in `messages[].content[]`, detects blocks of type
+/// "document" (PDF, DOCX) and converts them to `{"type": "text", "text": "..."}` blocks.
 ///
-/// Les blocs "image" sont laissés tels quels (OCR hors scope).
-/// En cas d'échec d'extraction, le bloc est laissé tel quel (fail-open).
+/// "image" blocks are left as-is (OCR is out of scope).
+/// On extraction failure, the block is left as-is (fail-open).
 ///
-/// Retourne le nombre de blocs convertis avec succès.
+/// Returns the number of blocks successfully converted.
 pub fn preprocess_media_blocks(body: &mut serde_json::Value, _provider: Provider) -> usize {
     let mut converted = 0;
 
@@ -45,7 +45,7 @@ pub fn preprocess_media_blocks(body: &mut serde_json::Value, _provider: Provider
                 } else {
                     tracing::warn!("Échec extraction document — bloc laissé tel quel");
                 }
-                // OCR image hors scope : on ignore les autres types
+                // Image OCR out of scope: ignore other types
             }
         }
     }
@@ -53,8 +53,8 @@ pub fn preprocess_media_blocks(body: &mut serde_json::Value, _provider: Provider
     converted
 }
 
-/// Tente d'extraire le texte d'un bloc document Anthropic.
-/// Structure attendue :
+/// Attempts to extract text from an Anthropic document block.
+/// Expected structure:
 /// ```json
 /// {
 ///   "type": "document",
@@ -122,7 +122,7 @@ mod tests {
 
         let count = preprocess_media_blocks(&mut body, Provider::Anthropic);
         assert_eq!(count, 0, "Aucun bloc media à convertir");
-        // Le contenu ne doit pas avoir changé
+        // The content should not have changed
         assert_eq!(
             body["messages"][0]["content"][0]["text"],
             "Bonjour, mon email est jean@acme.fr"
@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_preprocess_document_block_pdf() {
-        // Utiliser la fonction helper du module pdf pour créer un PDF valide avec texte
+        // Use the helper function from the pdf module to create a valid PDF with text
         use crate::extraction::pdf::tests::build_minimal_pdf_with_text;
 
         let pdf_bytes = build_minimal_pdf_with_text("Contrat Jean Dupont");
@@ -270,10 +270,10 @@ mod tests {
             ]
         });
 
-        // Ne doit pas paniquer — fail-open
+        // Must not panic — fail-open
         let count = preprocess_media_blocks(&mut body, Provider::Anthropic);
         assert_eq!(count, 0, "Base64 invalide → 0 conversions");
-        // Le bloc doit être laissé tel quel
+        // The block should be left as-is
         assert_eq!(body["messages"][0]["content"][0]["type"], "document");
     }
 }

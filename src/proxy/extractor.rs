@@ -1,13 +1,13 @@
 use crate::proxy::router::Provider;
 
-/// Champ textuel extrait d'un body JSON, avec son chemin pour reconstruction.
+/// Text field extracted from a JSON body, with its path for reconstruction.
 #[derive(Debug, Clone)]
 pub struct TextField {
     pub text: String,
     pub path: JsonPath,
 }
 
-/// Chemin JSON vers un champ textuel.
+/// JSON path to a text field.
 #[derive(Debug, Clone)]
 pub struct JsonPath {
     pub segments: Vec<JsonPathSegment>,
@@ -19,7 +19,7 @@ pub enum JsonPathSegment {
     Index(usize),
 }
 
-/// Extrait tous les champs textuels d'un body JSON selon le provider.
+/// Extracts all text fields from a JSON body according to the provider.
 pub fn extract_text_fields(body: &serde_json::Value, provider: Provider) -> Vec<TextField> {
     let mut fields = Vec::new();
 
@@ -32,7 +32,7 @@ pub fn extract_text_fields(body: &serde_json::Value, provider: Provider) -> Vec<
 }
 
 fn extract_anthropic_fields(body: &serde_json::Value, fields: &mut Vec<TextField>) {
-    // Champ "system" (peut être un string ou un array)
+    // "system" field (can be a string or an array)
     if let Some(system) = body.get("system") {
         if let Some(s) = system.as_str() {
             fields.push(TextField {
@@ -59,7 +59,7 @@ fn extract_anthropic_fields(body: &serde_json::Value, fields: &mut Vec<TextField
         }
     }
 
-    // Champ "messages"
+    // "messages" field
     if let Some(messages) = body.get("messages").and_then(|m| m.as_array()) {
         for (i, msg) in messages.iter().enumerate() {
             if let Some(content) = msg.get("content") {
@@ -139,7 +139,7 @@ fn extract_openai_fields(body: &serde_json::Value, fields: &mut Vec<TextField>) 
     }
 }
 
-/// Reconstruit le body JSON en remplaçant les champs textuels par les versions pseudonymisées.
+/// Rebuilds the JSON body by replacing text fields with their pseudonymized versions.
 pub fn rebuild_body(
     body: &serde_json::Value,
     replacements: &[(JsonPath, String)],
@@ -293,7 +293,7 @@ mod tests {
             rebuilt["messages"][0]["content"],
             "Mon email est paul@example.com"
         );
-        // Le modèle n'est pas touché
+        // The model is not touched
         assert_eq!(rebuilt["model"], "claude");
     }
 
@@ -321,7 +321,7 @@ mod tests {
         let rebuilt = rebuild_body(&body, &[(path, "Modifié".to_string())]);
 
         assert_eq!(rebuilt["messages"][0]["content"][0]["text"], "Modifié");
-        // L'image n'est pas touchée
+        // The image is not touched
         assert_eq!(rebuilt["messages"][0]["content"][1]["type"], "image");
     }
 

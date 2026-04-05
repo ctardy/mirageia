@@ -6,7 +6,7 @@ pub enum Provider {
     OpenAI,
 }
 
-/// Détermine le provider à partir du chemin de la requête.
+/// Determines the provider from the request path.
 pub fn resolve_provider(path: &str) -> Option<Provider> {
     if path.starts_with("/v1/messages") {
         Some(Provider::Anthropic)
@@ -20,7 +20,7 @@ pub fn resolve_provider(path: &str) -> Option<Provider> {
     }
 }
 
-/// Construit l'URL upstream complète pour le provider donné.
+/// Builds the full upstream URL for the given provider.
 pub fn upstream_url(provider: Provider, path: &str, config: &AppConfig) -> String {
     let base = match provider {
         Provider::Anthropic => &config.anthropic_base_url,

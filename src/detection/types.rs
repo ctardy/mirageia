@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Types de données personnelles identifiables détectés par le modèle.
+/// Types of personally identifiable information detected by the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PiiType {
     PersonName,
@@ -61,9 +61,9 @@ impl fmt::Display for PiiType {
     }
 }
 
-/// Convertit un label du modèle (ex: "I-EMAIL", "I-GIVENNAME") en PiiType.
+/// Converts a model label (e.g., "I-EMAIL", "I-GIVENNAME") to PiiType.
 pub fn label_to_pii_type(label: &str) -> Option<PiiType> {
-    // Retirer le préfixe BIO (B-, I-) s'il existe
+    // Strip the BIO prefix (B-, I-) if present
     let raw = label
         .strip_prefix("B-")
         .or_else(|| label.strip_prefix("I-"))
@@ -87,23 +87,23 @@ pub fn label_to_pii_type(label: &str) -> Option<PiiType> {
         "USERNAME" => Some(PiiType::Username),
         "PASSWORD" => Some(PiiType::Password),
         "IP_ADDRESS" | "IP" => Some(PiiType::IpAddress),
-        "O" => None, // pas un PII
+        "O" => None, // not a PII
         _ => Some(PiiType::Unknown),
     }
 }
 
-/// Une entité PII détectée dans le texte.
+/// A PII entity detected in the text.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PiiEntity {
-    /// Le texte original détecté.
+    /// The detected original text.
     pub text: String,
-    /// Le type de PII.
+    /// The PII type.
     pub entity_type: PiiType,
-    /// Position de début dans le texte original (offset en bytes).
+    /// Start position in the original text (byte offset).
     pub start: usize,
-    /// Position de fin dans le texte original (offset en bytes).
+    /// End position in the original text (byte offset).
     pub end: usize,
-    /// Score de confiance (0.0 à 1.0).
+    /// Confidence score (0.0 to 1.0).
     pub confidence: f32,
 }
 
@@ -117,14 +117,14 @@ impl fmt::Display for PiiEntity {
     }
 }
 
-/// Seuil de confiance par défaut pour chaque type de PII.
+/// Default confidence threshold for each PII type.
 pub fn default_threshold(pii_type: &PiiType) -> f32 {
     match pii_type {
-        // Seuils plus bas pour les types à haute valeur (on préfère un faux positif)
+        // Lower thresholds for high-value types (prefer a false positive)
         PiiType::ApiKey | PiiType::Password => 0.5,
         PiiType::CreditCard | PiiType::Iban | PiiType::AccountNumber => 0.6,
         PiiType::NationalId | PiiType::TaxNumber | PiiType::DriverLicense => 0.6,
-        // Seuil standard
+        // Standard threshold
         _ => 0.75,
     }
 }
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn test_label_aliases() {
-        // Vérifie que les alias fonctionnent
+        // Verify that aliases work
         assert_eq!(label_to_pii_type("I-FIRSTNAME"), Some(PiiType::GivenName));
         assert_eq!(label_to_pii_type("I-LASTNAME"), Some(PiiType::Surname));
         assert_eq!(label_to_pii_type("I-PHONE"), Some(PiiType::PhoneNumber));

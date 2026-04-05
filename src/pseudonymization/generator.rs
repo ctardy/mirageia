@@ -3,7 +3,7 @@ use rand::Rng;
 use crate::detection::PiiType;
 use crate::pseudonymization::dictionaries::Dictionaries;
 
-/// Générateur de pseudonymes cohérents par type de PII.
+/// Coherent pseudonym generator by PII type.
 pub struct PseudonymGenerator {
     dictionaries: Dictionaries,
 }
@@ -21,7 +21,7 @@ impl PseudonymGenerator {
         }
     }
 
-    /// Génère un pseudonyme pour le type donné.
+    /// Generates a pseudonym for the given type.
     pub fn generate(&self, pii_type: &PiiType, original: &str) -> String {
         let mut rng = rand::thread_rng();
         match pii_type {
@@ -71,7 +71,7 @@ impl PseudonymGenerator {
     fn gen_email(&self, rng: &mut impl Rng, _original: &str) -> String {
         let first_idx = rng.gen_range(0..self.dictionaries.firstnames.len());
         let firstname = &self.dictionaries.firstnames[first_idx];
-        // Normaliser (retirer accents basiques) pour l'email
+        // Normalize (strip basic accents) for the email
         let normalized: String = firstname
             .to_lowercase()
             .chars()
@@ -97,7 +97,7 @@ impl PseudonymGenerator {
                 rng.gen_range(1..0xFFFFu16)
             )
         } else {
-            // IPv4 dans la plage 10.0.x.x
+            // IPv4 in the 10.0.x.x range
             format!(
                 "10.0.{}.{}",
                 rng.gen_range(1..255u8),
@@ -107,7 +107,7 @@ impl PseudonymGenerator {
     }
 
     fn gen_phone(&self, rng: &mut impl Rng, original: &str) -> String {
-        // Préserver le format (longueur, séparateurs)
+        // Preserve the format (length, separators)
         let digits: String = original
             .chars()
             .map(|c| {
@@ -122,18 +122,18 @@ impl PseudonymGenerator {
     }
 
     fn gen_credit_card(&self, rng: &mut impl Rng) -> String {
-        // Générer un numéro de carte avec Luhn valide
+        // Generate a card number with valid Luhn checksum
         let mut digits: Vec<u8> = (0..15).map(|_| rng.gen_range(0..10u8)).collect();
-        // Préfixe 4 (Visa-like)
+        // Prefix 4 (Visa-like)
         digits[0] = 4;
-        // Calculer le digit de contrôle Luhn
+        // Compute the Luhn check digit
         let check = luhn_check_digit(&digits);
         digits.push(check);
         digits.iter().map(|d| char::from_digit(*d as u32, 10).unwrap()).collect()
     }
 
     fn gen_api_key(&self, rng: &mut impl Rng, original: &str) -> String {
-        // Préserver le préfixe (sk-, pk-, etc.) et la longueur
+        // Preserve the prefix (sk-, pk-, etc.) and the length
         let prefix_end = original.find('-').map(|i| i + 1).unwrap_or(0);
         let prefix = &original[..prefix_end];
         let rest_len = original.len() - prefix_end;
@@ -155,7 +155,7 @@ impl PseudonymGenerator {
     }
 
     fn gen_iban(&self, rng: &mut impl Rng) -> String {
-        // IBAN fictif format FR
+        // Fictitious IBAN in FR format
         format!(
             "FR{:02}{:05}{:05}{:011}{:02}",
             rng.gen_range(10..99u32),
@@ -167,7 +167,7 @@ impl PseudonymGenerator {
     }
 
     fn gen_national_id(&self, rng: &mut impl Rng, original: &str) -> String {
-        // Préserver la longueur, remplacer les chiffres
+        // Preserve the length, replace the digits
         original
             .chars()
             .map(|c| {
@@ -181,7 +181,7 @@ impl PseudonymGenerator {
     }
 }
 
-/// Calcule le digit de contrôle Luhn pour un numéro partiel (sans le dernier digit).
+/// Computes the Luhn check digit for a partial number (without the last digit).
 fn luhn_check_digit(digits: &[u8]) -> u8 {
     let mut sum: u32 = 0;
     for (i, &d) in digits.iter().rev().enumerate() {
@@ -197,7 +197,7 @@ fn luhn_check_digit(digits: &[u8]) -> u8 {
     ((10 - (sum % 10)) % 10) as u8
 }
 
-/// Vérifie qu'un numéro passe la validation Luhn.
+/// Checks whether a number passes Luhn validation.
 pub fn luhn_valid(number: &str) -> bool {
     let digits: Vec<u8> = number
         .chars()
@@ -274,7 +274,7 @@ mod tests {
         let phone = gen.generate(&PiiType::PhoneNumber, "+33 6 12 34 56 78");
         assert_eq!(phone.len(), "+33 6 12 34 56 78".len());
         assert!(phone.starts_with('+'));
-        // Les espaces doivent être préservés aux mêmes positions
+        // Spaces must be preserved at the same positions
         assert_eq!(phone.chars().nth(3), Some(' '));
         assert_eq!(phone.chars().nth(5), Some(' '));
     }
@@ -309,7 +309,7 @@ mod tests {
         for _ in 0..20 {
             results.insert(gen.generate(&PiiType::GivenName, "Jean"));
         }
-        // Avec 50 prénoms, sur 20 tirages on devrait avoir au moins 2 résultats différents
+        // With 50 first names, over 20 draws we should get at least 2 different results
         assert!(results.len() >= 2, "Le générateur produit toujours le même résultat");
     }
 

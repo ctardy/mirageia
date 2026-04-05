@@ -1,10 +1,10 @@
-/// Gestionnaire de modèles ONNX : téléchargement, cache, vérification SHA-256.
+/// ONNX model manager: download, cache, SHA-256 verification.
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-/// Métadonnées d'un modèle en cache.
+/// Metadata for a cached model.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModelMeta {
     pub model: String,
@@ -14,27 +14,27 @@ pub struct ModelMeta {
     pub source: String,
 }
 
-/// Retourne le répertoire des modèles : `~/.mirageia/models/`.
+/// Returns the models directory: `~/.mirageia/models/`.
 pub fn models_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Impossible de déterminer le répertoire home".to_string())?;
     Ok(home.join(".mirageia").join("models"))
 }
 
-/// Retourne le chemin du fichier indiquant le modèle actif.
+/// Returns the path to the file indicating the active model.
 fn active_model_file() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Impossible de déterminer le répertoire home".to_string())?;
     Ok(home.join(".mirageia").join("active_model"))
 }
 
-/// Retourne le chemin du répertoire d'un modèle donné.
+/// Returns the path to the directory for a given model.
 pub fn model_dir(model_name: &str) -> Result<PathBuf, String> {
-    // Remplacer '/' par '_' pour un nom de répertoire compatible FS
+    // Replace '/' with '_' for a filesystem-compatible directory name
     let safe_name = model_name.replace('/', "__");
     let dir = models_dir()?.join(safe_name);
     Ok(dir)
 }
 
-/// Vérifie si les fichiers du modèle sont présents dans le cache.
+/// Checks whether the model files are present in the cache.
 fn is_model_cached(model_name: &str) -> bool {
     let Ok(dir) = model_dir(model_name) else {
         return false;
@@ -44,7 +44,7 @@ fn is_model_cached(model_name: &str) -> bool {
         && dir.join("config.json").exists()
 }
 
-/// Retourne le modèle actif configuré (lit `~/.mirageia/active_model`).
+/// Returns the configured active model (reads `~/.mirageia/active_model`).
 pub fn get_active_model() -> Option<String> {
     let path = active_model_file().ok()?;
     let content = fs::read_to_string(path).ok()?;
@@ -56,7 +56,7 @@ pub fn get_active_model() -> Option<String> {
     }
 }
 
-/// Définit le modèle actif (écrit dans `~/.mirageia/active_model`).
+/// Sets the active model (writes to `~/.mirageia/active_model`).
 pub fn set_active_model(model_name: &str) -> Result<(), String> {
     let path = active_model_file()?;
     if let Some(parent) = path.parent() {
@@ -67,8 +67,8 @@ pub fn set_active_model(model_name: &str) -> Result<(), String> {
         .map_err(|e| format!("Écriture active_model échouée : {}", e))
 }
 
-/// Liste les modèles présents dans le cache.
-/// Retourne un vecteur de `(nom_modèle, is_active)`.
+/// Lists models present in the cache.
+/// Returns a vector of `(model_name, is_active)`.
 pub fn list_models() -> Vec<(String, bool)> {
     let Ok(dir) = models_dir() else {
         return Vec::new();
@@ -86,11 +86,11 @@ pub fn list_models() -> Vec<(String, bool)> {
             if !path.is_dir() {
                 return None;
             }
-            // Vérifier que les fichiers essentiels sont présents
+            // Check that essential files are present
             if !path.join("model.onnx").exists() {
                 return None;
             }
-            // Reconstituer le nom (remplacer '__' par '/')
+            // Reconstruct the name (replace '__' with '/')
             let dir_name = path.file_name()?.to_string_lossy().to_string();
             let model_name = dir_name.replace("__", "/");
             let is_active = active.as_deref() == Some(&model_name);
@@ -102,7 +102,7 @@ pub fn list_models() -> Vec<(String, bool)> {
     models
 }
 
-/// Supprime un modèle du cache.
+/// Deletes a model from the cache.
 pub fn delete_model(model_name: &str) -> Result<(), String> {
     let dir = model_dir(model_name)?;
     if !dir.exists() {
@@ -112,8 +112,8 @@ pub fn delete_model(model_name: &str) -> Result<(), String> {
         .map_err(|e| format!("Suppression du modèle '{}' échouée : {}", model_name, e))
 }
 
-/// Vérifie l'intégrité SHA-256 d'un fichier de modèle.
-/// Retourne Ok(true) si le fichier existe et est lisible, Ok(false) sinon.
+/// Verifies the SHA-256 integrity of a model file.
+/// Returns Ok(true) if the file exists and is readable, Ok(false) otherwise.
 pub fn verify_model(model_name: &str) -> Result<bool, String> {
     let dir = model_dir(model_name)?;
     let model_path = dir.join("model.onnx");
@@ -125,13 +125,13 @@ pub fn verify_model(model_name: &str) -> Result<bool, String> {
     let data = fs::read(&model_path)
         .map_err(|e| format!("Lecture model.onnx échouée : {}", e))?;
 
-    // Calculer le SHA-256 et vérifier qu'il est non-nul (présence du fichier intègre)
+    // Compute SHA-256 and verify it is non-null (file integrity check)
     let mut hasher = Sha256::new();
     hasher.update(&data);
     let hash = hasher.finalize();
     let hash_hex = hex::encode(hash);
 
-    // Lire le meta.json si présent pour comparer
+    // Read meta.json if present for comparison
     let meta_path = dir.join("meta.json");
     if meta_path.exists() {
         if let Ok(content) = fs::read_to_string(&meta_path) {
@@ -143,12 +143,12 @@ pub fn verify_model(model_name: &str) -> Result<bool, String> {
         }
     }
 
-    // Sans meta.json, on considère le modèle valide si le fichier est non-vide
+    // Without meta.json, consider the model valid if the file is non-empty
     Ok(!data.is_empty())
 }
 
-/// S'assure que le modèle est disponible en cache (télécharge si nécessaire).
-/// Retourne le chemin vers le fichier `model.onnx`.
+/// Ensures the model is available in cache (downloads if necessary).
+/// Returns the path to the `model.onnx` file.
 pub fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
     let dir = model_dir(model_name)?;
 
@@ -156,13 +156,13 @@ pub fn ensure_model(model_name: &str) -> Result<PathBuf, String> {
         return Ok(dir.join("model.onnx"));
     }
 
-    // Télécharger depuis HuggingFace
+    // Download from HuggingFace
     download_model(model_name)?;
 
     Ok(dir.join("model.onnx"))
 }
 
-/// Télécharge un modèle depuis HuggingFace.
+/// Downloads a model from HuggingFace.
 fn download_model(model_name: &str) -> Result<(), String> {
     let dir = model_dir(model_name)?;
     fs::create_dir_all(&dir)
@@ -198,18 +198,18 @@ fn download_model(model_name: &str) -> Result<(), String> {
             .bytes()
             .map_err(|e| format!("Lecture réponse échouée pour {} : {}", filename, e))?;
 
-        // Calculer le SHA-256
+        // Compute SHA-256
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let sha256 = hex::encode(hasher.finalize());
 
-        // Écrire le fichier
+        // Write the file
         let mut file = fs::File::create(&dest)
             .map_err(|e| format!("Création du fichier {} échouée : {}", filename, e))?;
         file.write_all(&bytes)
             .map_err(|e| format!("Écriture du fichier {} échouée : {}", filename, e))?;
 
-        // Écrire les métadonnées si c'est model.onnx
+        // Write metadata if this is model.onnx
         if *filename == "model.onnx" {
             let meta = ModelMeta {
                 model: model_name.to_string(),
@@ -231,7 +231,7 @@ fn download_model(model_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-// Module hex minimal pour éviter une dépendance externe
+// Minimal hex module to avoid an external dependency
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
         bytes
@@ -247,7 +247,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// Retourne un répertoire temporaire unique pour les tests.
+    /// Returns a unique temporary directory for tests.
     fn temp_mirageia_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "mirageia_test_{}",
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_models_dir_path() {
-        // models_dir() doit se terminer par .mirageia/models
+        // models_dir() must end with .mirageia/models
         let result = models_dir();
         assert!(result.is_ok(), "models_dir() ne doit pas échouer");
         let path = result.unwrap();
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_active_model_set_get() {
-        // Utiliser un home temporaire pour ne pas polluer le vrai home
+        // Use a temporary home to avoid polluting the real home
         let tmp_home = temp_mirageia_dir();
         let mirageia_dir = tmp_home.join(".mirageia");
         fs::create_dir_all(&mirageia_dir).unwrap();
@@ -289,26 +289,26 @@ mod tests {
         let active_file = mirageia_dir.join("active_model");
         fs::write(&active_file, "test/model-bert").unwrap();
 
-        // Lire directement via la fonction set/get avec un fichier temporaire
-        // (on teste la logique de lecture du fichier)
+        // Read directly via the set/get function with a temporary file
+        // (testing the file reading logic)
         let content = fs::read_to_string(&active_file).unwrap();
         assert_eq!(content.trim(), "test/model-bert");
 
-        // Nettoyer
+        // Clean up
         fs::remove_dir_all(&tmp_home).ok();
     }
 
     #[test]
     fn test_active_model_roundtrip() {
-        // Ce test écrit dans le vrai ~/.mirageia/active_model (temporairement)
-        // Sauvegarder la valeur actuelle
+        // This test writes to the real ~/.mirageia/active_model (temporarily)
+        // Save the current value
         let original = get_active_model();
 
-        // Écrire une valeur test
+        // Write a test value
         let result = set_active_model("test/roundtrip-model");
         assert!(result.is_ok(), "set_active_model ne doit pas échouer");
 
-        // Relire
+        // Read back
         let read_back = get_active_model();
         assert_eq!(
             read_back.as_deref(),
@@ -316,11 +316,11 @@ mod tests {
             "get_active_model doit retourner la valeur écrite"
         );
 
-        // Restaurer
+        // Restore
         match original {
             Some(ref name) => set_active_model(name).ok(),
             None => {
-                // Supprimer le fichier
+                // Delete the file
                 active_model_file().ok().and_then(|p| fs::remove_file(p).ok())
             }
         };
@@ -328,13 +328,13 @@ mod tests {
 
     #[test]
     fn test_list_models_empty() {
-        // Créer un répertoire models vide
+        // Create an empty models directory
         let tmp_home = temp_mirageia_dir();
         let models = tmp_home.join(".mirageia").join("models");
         fs::create_dir_all(&models).unwrap();
 
-        // On ne peut pas surcharger dirs::home_dir(), donc on teste la logique directement
-        // En testant que si models_dir() pointe sur un répertoire vide, list_models retourne vide
+        // We cannot override dirs::home_dir(), so we test the logic directly
+        // Testing that if models_dir() points to an empty directory, list_models returns empty
         let entries: Vec<_> = fs::read_dir(&models)
             .unwrap()
             .filter_map(|e| e.ok())
@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_model_dir_encoding() {
-        // Vérifier que les '/' sont bien encodés en '__'
+        // Verify that '/' are properly encoded as '__'
         let dir = model_dir("org/model-name").unwrap();
         let name = dir.file_name().unwrap().to_string_lossy();
         assert!(

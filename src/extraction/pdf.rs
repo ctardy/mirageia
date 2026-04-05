@@ -1,14 +1,14 @@
-/// Extraction de texte depuis un fichier PDF via lopdf.
+/// Text extraction from a PDF file via lopdf.
 use lopdf::Document;
 
-/// Extrait le texte d'un PDF fourni sous forme de bytes.
-/// Retourne None si les données sont invalides ou si aucun texte ne peut être extrait.
+/// Extracts text from a PDF provided as bytes.
+/// Returns None if the data is invalid or no text can be extracted.
 pub fn extract(data: &[u8]) -> Option<String> {
     let doc = Document::load_mem(data).ok()?;
 
     let mut parts: Vec<String> = Vec::new();
 
-    // Métadonnées via le trailer → Info dictionary
+    // Metadata via the trailer -> Info dictionary
     if let Ok(info_id) = doc.trailer.get(b"Info").and_then(lopdf::Object::as_reference) {
         if let Ok(info_dict) = doc.get_dictionary(info_id) {
             let mut meta_lines: Vec<String> = Vec::new();
@@ -35,7 +35,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
         }
     }
 
-    // Pages
+    // Pages extraction
     let mut page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
     page_numbers.sort_unstable();
 
@@ -55,7 +55,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
     Some(parts.join("\n\n"))
 }
 
-/// Module de tests exposant des helpers réutilisables par les tests d'autres modules.
+/// Test module exposing reusable helpers for tests in other modules.
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -70,7 +70,7 @@ pub mod tests {
         assert!(extract(b"not a pdf at all").is_none());
     }
 
-    /// Construit un PDF minimal valide avec du texte extractible via l'API lopdf.
+    /// Builds a minimal valid PDF with extractable text via the lopdf API.
     pub fn build_minimal_pdf_with_text(text_content: &str) -> Vec<u8> {
         use lopdf::dictionary;
         use lopdf::content::{Content, Operation};

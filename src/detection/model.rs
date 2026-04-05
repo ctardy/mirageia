@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::detection::error::DetectionError;
 
-/// Modèle ONNX pour la détection de PII.
+/// ONNX model for PII detection.
 #[cfg(feature = "onnx")]
 pub struct PiiModel {
     session: ort::session::Session,
@@ -10,7 +10,7 @@ pub struct PiiModel {
 
 #[cfg(feature = "onnx")]
 impl PiiModel {
-    /// Charge un modèle ONNX depuis un fichier.
+    /// Loads an ONNX model from a file.
     pub fn load(model_path: &Path) -> Result<Self, DetectionError> {
         let session = ort::session::Session::builder()
             .and_then(|builder| builder.with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3))
@@ -22,8 +22,8 @@ impl PiiModel {
         Ok(Self { session })
     }
 
-    /// Exécute l'inférence sur des input_ids et attention_mask.
-    /// Retourne les logits bruts : pour chaque token, un vecteur de scores par label.
+    /// Runs inference on input_ids and attention_mask.
+    /// Returns raw logits: for each token, a vector of scores per label.
     pub fn infer(
         &self,
         input_ids: &[i64],
@@ -47,7 +47,7 @@ impl PiiModel {
             ].map_err(|e| DetectionError::Inference(e.to_string()))?)
             .map_err(|e| DetectionError::Inference(e.to_string()))?;
 
-        // La sortie est un tensor de shape [1, seq_len, num_labels]
+        // Output is a tensor of shape [1, seq_len, num_labels]
         let output_tensor = outputs[0]
             .try_extract_tensor::<f32>()
             .map_err(|e| DetectionError::Inference(e.to_string()))?;
@@ -77,7 +77,7 @@ impl PiiModel {
     }
 }
 
-/// Retourne le chemin du répertoire des modèles (~/.mirageia/models/).
+/// Returns the path to the models directory (~/.mirageia/models/).
 pub fn models_dir() -> Result<PathBuf, DetectionError> {
     let home = dirs::home_dir().ok_or_else(|| {
         DetectionError::ModelNotFound("Impossible de trouver le répertoire home".to_string())
@@ -86,8 +86,8 @@ pub fn models_dir() -> Result<PathBuf, DetectionError> {
     Ok(home.join(".mirageia").join("models"))
 }
 
-/// Vérifie que le modèle et le tokenizer existent dans le répertoire des modèles.
-/// Retourne les chemins (model.onnx, tokenizer.json).
+/// Checks that the model and tokenizer exist in the models directory.
+/// Returns the paths (model.onnx, tokenizer.json).
 pub fn check_model_files(model_name: &str) -> Result<(PathBuf, PathBuf), DetectionError> {
     let dir = models_dir()?.join(model_name);
     let model_path = dir.join("model.onnx");
