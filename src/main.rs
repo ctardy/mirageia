@@ -62,6 +62,39 @@ enum Commands {
         #[arg(short, long, default_value = "http://127.0.0.1:3100")]
         addr: String,
     },
+
+    /// Gérer les modèles ONNX en cache (~/.mirageia/models/)
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelAction {
+    /// Lister les modèles en cache
+    List,
+
+    /// Télécharger un modèle depuis HuggingFace
+    Download {
+        /// Nom HuggingFace du modèle (ex: dslim/bert-base-NER)
+        name: String,
+    },
+
+    /// Définir le modèle actif
+    Use {
+        /// Nom du modèle à activer
+        name: String,
+    },
+
+    /// Supprimer un modèle du cache
+    Delete {
+        /// Nom du modèle à supprimer
+        name: String,
+    },
+
+    /// Vérifier l'intégrité SHA-256 du modèle actif
+    Verify,
 }
 
 #[tokio::main]
@@ -87,6 +120,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Stop { addr }) => {
             run_stop(&addr).await?;
+        }
+        Some(Commands::Model { action }) => {
+            run_model_command(action)?;
         }
         Some(Commands::Proxy { .. }) | None => {
             let passthrough = match &cli.command {
@@ -122,6 +158,92 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mirageia::update::spawn_background_check();
 
             proxy::start_proxy(config).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn run_model_command(action: ModelAction) -> Result<(), Box<dyn std::error::Error>> {
+    use mirageia::detection::model_manager;
+
+    match action {
+        ModelAction::List => {
+            let models = model_manager::list_models();
+            if models.is_empty() {
+                eprintln!("Aucun modèle en cache.");
+                eprintln!("Utilisez `mirageia model download <nom>` pour télécharger un modèle.");
+            } else {
+                eprintln!("Modèles en cache :");
+                for (name, is_active) in &models {
+                    let marker = if *is_active { " ← actif" } else { "" };
+                    eprintln!("  {}{}", name, marker);
+                }
+            }
+        }
+
+        ModelAction::Download { name } => {
+            eprintln!("Téléchargement du modèle '{}' depuis HuggingFace...", name);
+            match model_manager::ensure_model(&name) {
+                Ok(path) => {
+                    eprintln!("  ✓ Modèle téléchargé : {:?}", path);
+                }
+                Err(e) => {
+                    eprintln!("  ✗ Échec : {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ModelAction::Use { name } => {
+            match model_manager::set_active_model(&name) {
+                Ok(()) => {
+                    eprintln!("  ✓ Modèle actif défini : {}", name);
+                }
+                Err(e) => {
+                    eprintln!("  ✗ Échec : {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ModelAction::Delete { name } => {
+            match model_manager::delete_model(&name) {
+                Ok(()) => {
+                    eprintln!("  ✓ Modèle '{}' supprimé du cache", name);
+                }
+                Err(e) => {
+                    eprintln!("  ✗ Échec : {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        ModelAction::Verify => {
+            let active = model_manager::get_active_model();
+            match active {
+                None => {
+                    eprintln!("Aucun modèle actif configuré.");
+                    eprintln!("Utilisez `mirageia model use <nom>` pour en définir un.");
+                    std::process::exit(1);
+                }
+                Some(name) => {
+                    eprintln!("Vérification du modèle actif '{}'...", name);
+                    match model_manager::verify_model(&name) {
+                        Ok(true) => {
+                            eprintln!("  ✓ Intégrité vérifiée");
+                        }
+                        Ok(false) => {
+                            eprintln!("  ✗ Modèle absent ou corrompu");
+                            std::process::exit(1);
+                        }
+                        Err(e) => {
+                            eprintln!("  ✗ Erreur de vérification : {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
     }
 

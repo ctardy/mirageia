@@ -1,5 +1,6 @@
 pub mod error;
 pub mod model;
+pub mod model_manager;
 pub mod postprocess;
 pub mod regex_detector;
 pub mod tokenizer;

@@ -515,3 +515,4 @@ docker stop mirageia && docker rm mirageia
 | v0.4.2 | 04/04/2026 | Ajout validateurs IBAN (MOD-97), Luhn (CB), entropie de Shannon + patterns secrets (GitHub, AWS, Stripe, Anthropic, OpenAI, JWT, Slack) |
 | v0.4.1 | 04/04/2026 | Fix panic UTF-8 dans StreamBuffer (`rfind` → `char_indices().rev()`) ; fix champs SSE enrichis absents de la release v0.4.0 |
 | v0.4.0 | 2026 | Version initiale déployée |
+| v0.5.0 | 2026-04-04 | Extraction texte depuis PDF (lopdf) et DOCX (zip+XML) avant pseudonymisation ; model manager CLI (`mirageia model list/download/use/delete/verify`) |

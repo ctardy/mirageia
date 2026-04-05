@@ -183,3 +183,35 @@ quick-xml = "0.36"
 4. Hook into the request interceptor (`src/proxy/request_handler.rs`)
 5. Tests on corpus: PDF contract, Word file with comments, terminal screenshot
 6. Release `v0.6.0`
+
+---
+
+## Implementation Status (v0.5.0)
+
+**Implemented ✅**
+
+| File | Content |
+|------|---------|
+| `src/extraction/mod.rs` | `preprocess_media_blocks()` — main hook, fail-open |
+| `src/extraction/pdf.rs` | `extract()` via lopdf: text page by page + metadata (author, title, company) |
+| `src/extraction/docx.rs` | `extract()` via zip + quick-xml: document.xml + comments.xml + core.xml |
+| `src/detection/model_manager.rs` | `ensure_model()`, `list_models()`, `delete_model()`, `verify_model()`, `get/set_active_model()` |
+
+**`mirageia model` CLI subcommand:**
+```bash
+mirageia model list               # list cached models
+mirageia model download <name>    # download from HuggingFace
+mirageia model use <name>         # set active model
+mirageia model delete <name>      # remove from cache
+mirageia model verify             # verify SHA-256 of active model
+```
+
+**Dependencies added to Cargo.toml:**
+```toml
+lopdf = "0.34"
+quick-xml = "0.36"
+base64 = "0.22"
+reqwest = { ..., features = ["...", "blocking"] }
+```
+
+**Tests: 219 total (203 unit + 16 integration)**

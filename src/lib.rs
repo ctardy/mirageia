@@ -1,5 +1,6 @@
 pub mod config;
 pub mod detection;
+pub mod extraction;
 pub mod mapping;
 pub mod proxy;
 pub mod pseudonymization;

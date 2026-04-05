@@ -12,6 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::config::AppConfig;
 use crate::detection::regex_detector::RegexDetector;
+use crate::extraction::preprocess_media_blocks;
 use crate::mapping::MappingTable;
 use crate::pseudonymization::generator::PseudonymGenerator;
 use crate::pseudonymization::{depseudonymize_text, pseudonymize_text};
@@ -402,8 +403,14 @@ fn pseudonymize_request(
     provider: router::Provider,
     state: &ProxyState,
 ) -> Result<PseudonymizeResult, String> {
-    let body: serde_json::Value =
+    let mut body: serde_json::Value =
         serde_json::from_slice(body_bytes).map_err(|e| format!("JSON invalide : {}", e))?;
+
+    // Prétraitement : convertir les blocs document (PDF, DOCX) en blocs texte
+    let media_converted = preprocess_media_blocks(&mut body, provider);
+    if media_converted > 0 {
+        tracing::debug!(media_converted, "Blocs media convertis en texte");
+    }
 
     let text_fields = extract_text_fields(&body, provider);
 
