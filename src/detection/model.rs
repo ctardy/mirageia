@@ -100,7 +100,8 @@ pub fn models_dir() -> Result<PathBuf, DetectionError> {
 /// Checks that the model and tokenizer exist in the models directory.
 /// Returns the paths (model.onnx, tokenizer.json).
 pub fn check_model_files(model_name: &str) -> Result<(PathBuf, PathBuf), DetectionError> {
-    let dir = models_dir()?.join(model_name);
+    let safe_name = model_name.replace('/', "__");
+    let dir = models_dir()?.join(safe_name);
     let model_path = dir.join("model.onnx");
     let tokenizer_path = dir.join("tokenizer.json");
 
