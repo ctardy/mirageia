@@ -21,8 +21,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Phase 2 — PII Detection
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
-ndarray = "0.16"
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }
+ndarray = "0.17"
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"], optional = true }
 tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
 
 # Phase 3 — Pseudonymization
