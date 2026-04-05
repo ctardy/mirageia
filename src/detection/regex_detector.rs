@@ -1,7 +1,7 @@
 use regex::Regex;
 
 use crate::detection::types::{PiiEntity, PiiType};
-use crate::detection::validator::{iban_valid, luhn_valid};
+use crate::detection::validator::{iban_valid, looks_like_secret, luhn_valid};
 
 /// Regex-based PII detector with algorithmic validation (Luhn, MOD-97).
 /// Patterns inspired by Presidio (MIT) and gitleaks (MIT).
@@ -11,8 +11,11 @@ use crate::detection::validator::{iban_valid, luhn_valid};
 pub struct RegexDetector {
     /// Patterns without post-regex validation.
     patterns: Vec<(PiiType, Regex)>,
-    /// Patterns requiring algorithmic validation after the match.
+    /// Patterns requiring algorithmic validation after the match (full match validated).
     validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)>,
+    /// Patterns with capture group 1 = value to pseudonymize, validated by fn(&str) -> bool.
+    /// Used for context-based secrets: `password = VALUE` → only VALUE is pseudonymized.
+    capture_validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)>,
 }
 
 impl Default for RegexDetector {
@@ -116,7 +119,21 @@ impl RegexDetector {
             ),
         ];
 
-        Self { patterns, validated_patterns }
+        // Patterns with capture group 1 = value to pseudonymize + entropy validation
+        // Regex matches `keyword = VALUE` or `keyword est VALUE` — only VALUE is pseudonymized
+        // Source: detect-secrets HighEntropyString + gitleaks generic-api-key (MIT)
+        #[allow(clippy::type_complexity)]
+        let capture_validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)> = vec![
+            (
+                PiiType::Password,
+                Regex::new(
+                    r"(?i)(?:password|passwd|pwd|mdp|secret|mot\s+de\s+passe)\s*(?:=|:|\s+est|\s+is)\s*(\S{8,})"
+                ).unwrap(),
+                looks_like_secret,
+            ),
+        ];
+
+        Self { patterns, validated_patterns, capture_validated_patterns }
     }
 
     /// Detects PII in text via regex, excluding whitelisted terms.
@@ -141,6 +158,25 @@ impl RegexDetector {
                 let matched = mat.as_str();
                 if validator(matched) {
                     self.push_if_new(&mut entities, matched, *pii_type, mat.start(), mat.end(), 0.95);
+                }
+            }
+        }
+
+        // Capture-group patterns (confidence 0.95): keyword = VALUE — only VALUE pseudonymized
+        for (pii_type, regex, validator) in &self.capture_validated_patterns {
+            for caps in regex.captures_iter(text) {
+                if let Some(value_match) = caps.get(1) {
+                    let value = value_match.as_str();
+                    if validator(value) {
+                        self.push_if_new(
+                            &mut entities,
+                            value,
+                            *pii_type,
+                            value_match.start(),
+                            value_match.end(),
+                            0.95,
+                        );
+                    }
                 }
             }
         }
@@ -324,6 +360,31 @@ mod tests {
         let entities = detector().detect("key: sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789AB");
         let key_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::ApiKey).collect();
         assert_eq!(key_entities.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_password_in_context() {
+        // Password after keyword "mot de passe est" — only VALUE pseudonymized
+        let entities = detector().detect("Mon mot de passe est P@ssw0rd!Secure99");
+        let pwd_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Password).collect();
+        assert_eq!(pwd_entities.len(), 1, "Le mot de passe doit être détecté");
+        assert_eq!(pwd_entities[0].text, "P@ssw0rd!Secure99");
+    }
+
+    #[test]
+    fn test_detect_password_with_equals() {
+        let entities = detector().detect("password=aZ9!xK2@mP5#qR8$");
+        let pwd_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Password).collect();
+        assert_eq!(pwd_entities.len(), 1);
+        assert_eq!(pwd_entities[0].text, "aZ9!xK2@mP5#qR8$");
+    }
+
+    #[test]
+    fn test_detect_simple_password_not_detected() {
+        // Simple password without special chars / low entropy → NOT detected
+        let entities = detector().detect("password=simple123");
+        let pwd_entities: Vec<_> = entities.iter().filter(|e| e.entity_type == PiiType::Password).collect();
+        assert_eq!(pwd_entities.len(), 0, "Mot de passe simple (faible entropie) ne doit pas être détecté");
     }
 
     #[test]

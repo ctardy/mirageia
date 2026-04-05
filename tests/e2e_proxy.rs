@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -545,6 +547,428 @@ async fn test_shutdown_endpoint() {
         .send()
         .await;
     assert!(result.is_err(), "Le proxy devrait être arrêté");
+}
+
+// ─── Cahier de recette — PII types ──────────────────────────
+
+/// RC-01 : Téléphone français pseudonymisé dans la requête upstream
+#[tokio::test]
+async fn test_pseudonymize_phone_in_request() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Appelez le 06 12 34 56 78 pour confirmer."}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        !sent.contains("06 12 34 56 78"),
+        "RC-01 FAIL : téléphone non pseudonymisé dans upstream. Reçu: {}",
+        sent
+    );
+}
+
+/// RC-02 : IBAN français pseudonymisé (MOD-97 valide requis pour détection)
+#[tokio::test]
+async fn test_pseudonymize_iban_in_request() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Virement sur IBAN FR7630006000011234567890189 svp."}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        !sent.contains("FR7630006000011234567890189"),
+        "RC-02 FAIL : IBAN non pseudonymisé dans upstream. Reçu: {}",
+        sent
+    );
+}
+
+/// RC-02b : IBAN restauré dans la réponse (dé-pseudonymisation)
+#[tokio::test]
+async fn test_depseudonymize_iban_in_response() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "IBAN du compte : FR7630006000011234567890189"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let response_text = resp.text().await.unwrap();
+    assert!(
+        response_text.contains("FR7630006000011234567890189"),
+        "RC-02b FAIL : IBAN original non restauré dans la réponse. Reçu: {}",
+        response_text
+    );
+}
+
+/// RC-03 : Carte bancaire pseudonymisée (Luhn valide requis)
+#[tokio::test]
+async fn test_pseudonymize_credit_card_in_request() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Ma carte Visa est 4111111111111111, exp 12/26."}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        !sent.contains("4111111111111111"),
+        "RC-03 FAIL : numéro CB non pseudonymisé dans upstream. Reçu: {}",
+        sent
+    );
+}
+
+/// RC-04 : Clé API Anthropic pseudonymisée (régression v0.4.3 — chevauchement phone/apikey)
+#[tokio::test]
+async fn test_pseudonymize_api_key_in_request() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let api_key = "sk-ant-api03-AAABBBCCC0123456789xyzXYZ0123456789abcdefABCDEF-end";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": format!("Ma clé API est {}", api_key)}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        !sent.contains(api_key),
+        "RC-04 FAIL : clé API non pseudonymisée dans upstream. Reçu: {}",
+        sent
+    );
+}
+
+/// Construit un PDF minimal avec du texte (dupliqué ici car cfg(test) n'est pas visible depuis les tests d'intégration)
+fn build_test_pdf(text_content: &str) -> Vec<u8> {
+    use lopdf::content::{Content, Operation};
+    use lopdf::{dictionary, Document, Object, Stream};
+
+    let mut doc = Document::with_version("1.5");
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Courier",
+    });
+    let resources_id = doc.add_object(dictionary! {
+        "Font" => dictionary! { "F1" => font_id },
+    });
+    let content = Content {
+        operations: vec![
+            Operation::new("BT", vec![]),
+            Operation::new("Tf", vec!["F1".into(), 12.into()]),
+            Operation::new("Td", vec![100.into(), 700.into()]),
+            Operation::new("Tj", vec![Object::string_literal(text_content)]),
+            Operation::new("ET", vec![]),
+        ],
+    };
+    let pages_id = doc.new_object_id();
+    let content_id = doc.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page", "Parent" => pages_id, "Contents" => content_id,
+    });
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page_id.into()],
+        "Count" => 1,
+        "Resources" => resources_id,
+        "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    buf
+}
+
+/// Construit un DOCX minimal avec du texte
+fn build_test_docx_inline(text: &str) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    use zip::write::{FileOptions, ZipWriter};
+    use zip::CompressionMethod;
+
+    let xml = format!(
+        r#"<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>{}</w:t></w:r></w:p></w:body></w:document>"#,
+        text
+    );
+    let cursor = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(cursor);
+    let options: FileOptions<'_, ()> =
+        FileOptions::default().compression_method(CompressionMethod::Deflated);
+    zip.start_file("word/document.xml", options).unwrap();
+    zip.write_all(xml.as_bytes()).unwrap();
+    zip.finish().unwrap().into_inner()
+}
+
+/// RC-05 : Extraction PDF — le document est converti en texte et les PII pseudonymisées
+#[tokio::test]
+async fn test_document_pdf_extracted_and_pseudonymized() {
+    let pdf_bytes = build_test_pdf("Client jean.dupont@acme.fr IP 192.168.1.10");
+    let data_b64 = BASE64.encode(&pdf_bytes);
+
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": data_b64
+                    }
+                }]
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let content = &captured_body.as_ref().unwrap()["messages"][0]["content"];
+
+    // Le bloc document doit être converti en bloc text
+    let block = content.get(0).expect("RC-05 FAIL : aucun bloc dans content");
+    assert_eq!(
+        block["type"], "text",
+        "RC-05 FAIL : le bloc document n'a pas été converti en text. Reçu: {}",
+        block
+    );
+
+    let text = block["text"].as_str().unwrap();
+    assert!(
+        text.contains("[document PDF]"),
+        "RC-05 FAIL : marqueur [document PDF] absent. Reçu: {}",
+        text
+    );
+    // Les PII dans le document doivent être pseudonymisées
+    assert!(
+        !text.contains("jean.dupont@acme.fr"),
+        "RC-05 FAIL : email non pseudonymisé dans le PDF extrait. Reçu: {}",
+        text
+    );
+    assert!(
+        !text.contains("192.168.1.10"),
+        "RC-05 FAIL : IP non pseudonymisée dans le PDF extrait. Reçu: {}",
+        text
+    );
+}
+
+/// RC-06 : Extraction DOCX — le document est converti en texte et les PII pseudonymisées
+#[tokio::test]
+async fn test_document_docx_extracted_and_pseudonymized() {
+    let docx_bytes = build_test_docx_inline("Contact alice@corp.com au 06 99 88 77 66");
+    let data_b64 = BASE64.encode(&docx_bytes);
+
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "data": data_b64
+                    }
+                }]
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let content = &captured_body.as_ref().unwrap()["messages"][0]["content"];
+    let block = content.get(0).expect("RC-06 FAIL : aucun bloc dans content");
+
+    assert_eq!(
+        block["type"], "text",
+        "RC-06 FAIL : le bloc document DOCX n'a pas été converti en text. Reçu: {}",
+        block
+    );
+    let text = block["text"].as_str().unwrap();
+    assert!(
+        text.contains("[document DOCX]"),
+        "RC-06 FAIL : marqueur [document DOCX] absent. Reçu: {}",
+        text
+    );
+    assert!(
+        !text.contains("alice@corp.com"),
+        "RC-06 FAIL : email non pseudonymisé dans le DOCX extrait. Reçu: {}",
+        text
+    );
+}
+
+/// RC-08 : Secret / mot de passe à haute entropie pseudonymisé
+#[tokio::test]
+async fn test_pseudonymize_secret_password_in_request() {
+    let (upstream_addr, captured) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    // Mot de passe fort : longueur ≥ 12, entropie > 3.5, 3+ classes de caractères
+    let password = "P@ssw0rd!Secure99";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": format!("Mon mot de passe est {}", password)}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let captured_body = captured.lock().await;
+    let sent = captured_body.as_ref().unwrap()["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        !sent.contains(password),
+        "RC-08 FAIL : mot de passe non pseudonymisé dans upstream. Reçu: {}",
+        sent
+    );
+}
+
+/// RC-07 : pii_count exact dans les événements proxy
+#[tokio::test]
+async fn test_pii_count_exact_in_events() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+
+    let mut config = mirageia::config::AppConfig::default();
+    config.listen_addr = "127.0.0.1:0".to_string();
+    config.anthropic_base_url = format!("http://{}", upstream_addr);
+
+    let state = Arc::new(mirageia::proxy::create_state(config));
+    let mut events_rx = state.events_tx.subscribe();
+    let app = mirageia::proxy::create_router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let client = reqwest::Client::new();
+    client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "Email: a@b.com IP: 10.0.0.1"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let req_event = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        events_rx.recv(),
+    )
+    .await
+    .expect("RC-07 FAIL : timeout événement")
+    .expect("RC-07 FAIL : erreur réception");
+
+    assert!(
+        req_event.pii_count >= 2,
+        "RC-07 FAIL : pii_count={} attendu >= 2",
+        req_event.pii_count
+    );
+    let types_str = req_event.pii_types.join(",");
+    assert!(
+        types_str.contains("EMAIL"),
+        "RC-07 FAIL : EMAIL absent de pii_types: {}",
+        types_str
+    );
+    assert!(
+        types_str.contains("IP_ADDRESS"),
+        "RC-07 FAIL : IP_ADDRESS absent de pii_types: {}",
+        types_str
+    );
 }
 
 #[tokio::test]
