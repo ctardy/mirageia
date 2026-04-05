@@ -12,6 +12,8 @@ use tokio::sync::broadcast;
 
 use crate::config::AppConfig;
 use crate::detection::regex_detector::RegexDetector;
+#[cfg(feature = "onnx")]
+use crate::detection::PiiDetector;
 use crate::extraction::preprocess_media_blocks;
 use crate::mapping::MappingTable;
 use crate::pseudonymization::generator::PseudonymGenerator;
@@ -84,6 +86,8 @@ pub struct ProxyState {
     pub config: AppConfig,
     pub client: UpstreamClient,
     pub detector: RegexDetector,
+    #[cfg(feature = "onnx")]
+    pub onnx_detector: Option<Arc<PiiDetector>>,
     pub mapping: Arc<MappingTable>,
     pub generator: Arc<Mutex<PseudonymGenerator>>,
     pub events_tx: broadcast::Sender<ProxyEvent>,
@@ -94,14 +98,42 @@ pub struct ProxyState {
 pub fn create_state(config: AppConfig) -> ProxyState {
     let (events_tx, _) = broadcast::channel(256);
     let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+
+    #[cfg(feature = "onnx")]
+    let onnx_detector = load_onnx_detector(&config);
+
     ProxyState {
         config,
         client: UpstreamClient::new(),
         detector: RegexDetector::new(),
+        #[cfg(feature = "onnx")]
+        onnx_detector,
         mapping: Arc::new(MappingTable::new()),
         generator: Arc::new(Mutex::new(PseudonymGenerator::new())),
         events_tx,
         shutdown_tx,
+    }
+}
+
+/// Tente de charger le PiiDetector ONNX depuis le modèle configuré ou le modèle actif.
+/// Retourne None si aucun modèle n'est disponible ou si le chargement échoue (fail-open).
+#[cfg(feature = "onnx")]
+fn load_onnx_detector(config: &AppConfig) -> Option<Arc<PiiDetector>> {
+    use crate::detection::model_manager;
+
+    // Priorité : config.model_name > modèle actif dans ~/.mirageia/active_model
+    let model_name = config.model_name.clone()
+        .or_else(|| model_manager::get_active_model())?;
+
+    match PiiDetector::from_model_name(&model_name) {
+        Ok(detector) => {
+            tracing::info!("Modèle ONNX '{}' chargé — détection contextuelle active", model_name);
+            Some(Arc::new(detector))
+        }
+        Err(e) => {
+            tracing::warn!("Modèle ONNX '{}' non disponible : {} — détection regex seule", model_name, e);
+            None
+        }
     }
 }
 
@@ -431,6 +463,30 @@ fn pseudonymize_request(
 
     for field in &text_fields {
         let entities = state.detector.detect_with_whitelist(&field.text, &state.config.whitelist);
+
+        // Enrich with ONNX contextual detection (names, dates, addresses, etc.)
+        // Shadow `entities` to append ONNX entities that don't overlap regex ones.
+        #[cfg(feature = "onnx")]
+        let entities = {
+            let mut combined = entities;
+            if let Some(onnx) = &state.onnx_detector {
+                if let Ok(onnx_entities) = onnx.detect(&field.text) {
+                    for onnx_entity in onnx_entities {
+                        // Skip Unknown labels and anything already covered by regex
+                        if onnx_entity.entity_type == crate::detection::PiiType::Unknown {
+                            continue;
+                        }
+                        let overlaps = combined.iter().any(|e| {
+                            onnx_entity.start < e.end && onnx_entity.end > e.start
+                        });
+                        if !overlaps {
+                            combined.push(onnx_entity);
+                        }
+                    }
+                }
+            }
+            combined
+        };
 
         if !entities.is_empty() {
             total_pii += entities.len();

@@ -42,10 +42,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --features onnx
 
       - name: Run tests
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --target ${{ matrix.target }} --features onnx
 
       - name: Package (zip)
         if: matrix.archive == 'zip'

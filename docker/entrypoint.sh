@@ -20,6 +20,16 @@ curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-
 echo "  ✓ MirageIA $(mirageia --version)"
 echo "  ✓ Claude Code $(claude --version 2>&1 | head -1)"
 
+# Télécharger le modèle ONNX si non déjà en cache (persisté dans /root/.mirageia/models/)
+ONNX_MODEL="iiiorg/piiranha-v1-detect-personal-information"
+echo "  → Vérification du modèle ONNX PII..."
+if mirageia model download "$ONNX_MODEL"; then
+    mirageia model use "$ONNX_MODEL"
+    echo "  ✓ Modèle ONNX actif — détection contextuelle activée"
+else
+    echo "  ⚠ Modèle ONNX non disponible — détection regex seule"
+fi
+
 # Clé API : optionnelle (on peut se connecter via 'claude login' à l'intérieur)
 if [ -n "$ANTHROPIC_API_KEY" ]; then
     echo "  ✓ ANTHROPIC_API_KEY détectée"

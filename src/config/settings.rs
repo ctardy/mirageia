@@ -20,6 +20,9 @@ pub struct AppConfig {
     pub fail_open: bool,
     /// Passthrough mode: if true, the proxy relays without pseudonymizing.
     pub passthrough: bool,
+    /// ONNX model name to use for contextual PII detection (e.g. "iiiorg/piiranha-v1-detect-personal-information").
+    /// If None, falls back to the active model configured via `mirageia model use`.
+    pub model_name: Option<String>,
 }
 
 /// Structure of the config.toml file (deserializable).
@@ -65,6 +68,7 @@ impl Default for AppConfig {
             add_header: false,
             fail_open: true,
             passthrough: false,
+            model_name: None,
         }
     }
 }
@@ -125,6 +129,9 @@ impl AppConfig {
         }
         if env::var("MIRAGEIA_PASSTHROUGH").is_ok() {
             config.passthrough = true;
+        }
+        if let Ok(name) = env::var("MIRAGEIA_MODEL_NAME") {
+            config.model_name = Some(name);
         }
 
         config
