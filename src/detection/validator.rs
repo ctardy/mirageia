@@ -1,6 +1,5 @@
 /// Algorithmes de validation PII portés depuis Presidio et detect-secrets.
 /// Pur Rust, zéro dépendance externe.
-
 /// Validation IBAN par algorithme MOD-97 (ISO 13616).
 /// Source : Presidio IbanRecognizer + Wikipedia MOD-97-10
 pub fn iban_valid(iban: &str) -> bool {
@@ -74,7 +73,7 @@ pub fn luhn_valid(s: &str) -> bool {
         })
         .sum();
 
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Entropie de Shannon d'une chaîne (bits par caractère).

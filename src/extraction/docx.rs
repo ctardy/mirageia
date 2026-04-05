@@ -90,32 +90,24 @@ fn extract_w_t_text(xml: &str) -> String {
             }
 
             // Fermeture de paragraphe
-            if bytes[tag_name_start..].starts_with(b"/w:p>")
+            if (bytes[tag_name_start..].starts_with(b"/w:p>")
                 || bytes[tag_name_start..].starts_with(b"w:p ")
-                || bytes[tag_name_start..].starts_with(b"w:p>")
+                || bytes[tag_name_start..].starts_with(b"w:p>"))
+                && bytes[tag_name_start] == b'w'
+                && tag_name_start + 1 < len
+                && bytes[tag_name_start + 1] == b':'
+                && tag_name_start + 2 < len
+                && bytes[tag_name_start + 2] == b'p'
+                && bytes[tag_name_start..].starts_with(b"/w:p>")
             {
-                if bytes[tag_name_start] == b'w'
-                    && tag_name_start + 1 < len
-                    && bytes[tag_name_start + 1] == b':'
-                    && tag_name_start + 2 < len
-                    && bytes[tag_name_start + 2] == b'p'
-                {
-                    let is_close = bytes[tag_name_start - 1] == b'/';
-                    let next = bytes.get(tag_name_start + 3).copied();
-                    let is_open = !is_close && (next == Some(b'>') || next == Some(b' '));
-                    let is_end = bytes[tag_name_start..].starts_with(b"/w:p>");
-                    if is_end {
-                        // Fin de paragraphe
-                        if !current_para.trim().is_empty() {
-                            if !result.is_empty() {
-                                result.push('\n');
-                            }
-                            result.push_str(current_para.trim());
-                        }
-                        current_para.clear();
+                // Fin de paragraphe
+                if !current_para.trim().is_empty() {
+                    if !result.is_empty() {
+                        result.push('\n');
                     }
-                    let _ = is_open;
+                    result.push_str(current_para.trim());
                 }
+                current_para.clear();
             }
 
             // Balise <w:t> ou <w:t xml:space="preserve">

@@ -19,7 +19,7 @@ pub fn extract(data: &[u8]) -> Option<String> {
                 (b"Title", "titre"),
                 (b"Subject", "sujet"),
             ] {
-                if let Ok(obj) = info_dict.get(*key) {
+                if let Ok(obj) = info_dict.get(key) {
                     if let Ok(s) = obj.as_string() {
                         let s = s.trim();
                         if !s.is_empty() {

@@ -35,20 +35,17 @@ pub fn preprocess_media_blocks(body: &mut serde_json::Value, _provider: Provider
                 .and_then(|t| t.as_str())
                 .map(String::from);
 
-            match block_type.as_deref() {
-                Some("document") => {
-                    if let Some(extracted) = try_extract_document(block) {
-                        *block = serde_json::json!({
-                            "type": "text",
-                            "text": extracted,
-                        });
-                        converted += 1;
-                    } else {
-                        tracing::warn!("Échec extraction document — bloc laissé tel quel");
-                    }
+            if block_type.as_deref() == Some("document") {
+                if let Some(extracted) = try_extract_document(block) {
+                    *block = serde_json::json!({
+                        "type": "text",
+                        "text": extracted,
+                    });
+                    converted += 1;
+                } else {
+                    tracing::warn!("Échec extraction document — bloc laissé tel quel");
                 }
-                // OCR image hors scope : on ignore
-                _ => {}
+                // OCR image hors scope : on ignore les autres types
             }
         }
     }

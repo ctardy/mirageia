@@ -7,6 +7,7 @@ use crate::detection::validator::{iban_valid, luhn_valid};
 /// Patterns inspirés de Presidio (MIT) et gitleaks (MIT).
 /// Détecte les PII à pattern fixe : emails, IPs, téléphones, CB, IBAN, clés API, secrets.
 /// Ne fait PAS de détection contextuelle (noms de personnes, etc.).
+#[allow(clippy::type_complexity)]
 pub struct RegexDetector {
     /// Patterns sans validation post-regex.
     patterns: Vec<(PiiType, Regex)>,
@@ -97,6 +98,7 @@ impl RegexDetector {
         ];
 
         // Patterns avec validation algorithmique post-regex
+        #[allow(clippy::type_complexity)]
         let validated_patterns: Vec<(PiiType, Regex, fn(&str) -> bool)> = vec![
             // IBAN — regex large (tous pays) + validation MOD-97
             // Source regex : Presidio IbanRecognizer (MIT)

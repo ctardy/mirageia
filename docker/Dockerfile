@@ -1,39 +1,34 @@
 FROM ubuntu:24.04
 
-# Éviter les prompts interactifs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Dépendances système
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
-    gnupg \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-# Node.js 22 (pour Claude Code)
+# Node.js 22 + Claude Code
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code
 RUN npm install -g @anthropic-ai/claude-code
 
-# MirageIA — binaire depuis GitHub Releases
-ARG MIRAGEIA_VERSION=v0.1.0
-RUN curl -sSfL "https://github.com/ctardy/mirageia/releases/download/${MIRAGEIA_VERSION}/mirageia-linux-x86_64.tar.gz" \
-    | tar xz -C /usr/local/bin/ \
-    && chmod +x /usr/local/bin/mirageia
+# ttyd — terminal web
+RUN curl -sSfL https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 \
+    -o /usr/local/bin/ttyd \
+    && chmod +x /usr/local/bin/ttyd
 
-# Vérification
-RUN mirageia --version && claude --version
+# Dossier utilisateur pour les binaires installés manuellement
+RUN mkdir -p /root/.local/bin
+ENV PATH="/root/.local/bin:$PATH"
 
-# Répertoire de travail
 WORKDIR /workspace
 
-# Script d'entrée
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 3100
+EXPOSE 7681
 
 ENTRYPOINT ["/entrypoint.sh"]
