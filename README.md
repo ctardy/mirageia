@@ -292,7 +292,7 @@ cargo test -- pseudonymization
 
 | Component | Status | Notes |
 |---|---|---|
-| Transparent HTTP proxy | Done | axum, Anthropic/OpenAI routing |
+| HTTP proxy (explicit client config) | Done | axum, Anthropic/OpenAI routing — requires setting `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL` in the client |
 | Regex PII detection | Done | 8 PII types |
 | Reversible pseudonymization | Done | AES-256-GCM mapping |
 | Response de-pseudonymization | Done | Non-streaming + SSE buffer |
@@ -304,8 +304,8 @@ cargo test -- pseudonymization
 | Web dashboard | Done | `/dashboard` embedded in binary |
 | Docker + deployment | Done | Dockerfile, ops guide, Apache reverse proxy |
 | E2E tests | Done | 233 tests (207 unit + 26 e2e) |
-| Contextual ONNX detection | Structured | Code ready, ONNX Runtime blocked by MSVC toolchain |
-| Tauri dashboard | Planned | Phase 4 |
+| Contextual ONNX detection | Structured | Code ready (optional feature), ONNX Runtime blocked by MSVC toolchain on Windows; model ~337 MB downloaded separately |
+| Tauri dashboard | Dropped | Removed — dashboard is a web page served by Axum at `/dashboard` |
 
 ---
 

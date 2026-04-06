@@ -15,7 +15,7 @@
 │       ▲                                     │           │
 │       │              ┌──────────┐           │           │
 │       └──────────────│ Dashboard│───────────┘           │
-│                      │ (Tauri)  │                       │
+│                      │ (Axum)   │                       │
 │                      └──────────┘                       │
 └─────────────────────────────────────────────────────────┘
         ▲                                     │
@@ -51,8 +51,8 @@
 - Deterministic mapping per session: same input = same pseudonym throughout the conversation
 - De-pseudonymization in responses: searches for pseudonyms and re-injects the originals
 
-### 4. Dashboard (Tauri webview)
-- Discreet tray icon (taskbar)
+### 4. Dashboard (web page served by Axum)
+- Accessible at `http://localhost:3100/dashboard` in any browser — no desktop interface or tray icon
 - Real-time view of detected and pseudonymized PII
 - Session statistics (number of replacements, PII types)
 - Configuration (supported providers, PII types to detect, exclusions)
@@ -61,7 +61,7 @@
 
 1. **Incoming request**: the application sends a request to `localhost:3100/v1/messages`
 2. **Content extraction**: the proxy extracts text from messages (user, system, assistant)
-3. **PII detection**: the ONNX model analyzes the text and returns detected entities with their positions
+3. **PII detection**: the regex detector (default) or the optional ONNX model analyzes the text and returns detected entities with their positions
 4. **Pseudonymization**: each entity is replaced by a fictitious value, the mapping is stored
 5. **Sending**: the cleaned request is forwarded to the real API
 6. **Response**: the API response is intercepted
@@ -73,5 +73,5 @@
 - **Single binary**: no external dependency installation required
 - **Cross-platform**: Windows, macOS, Linux
 - **Performance**: added latency < 100ms (detection + replacement)
-- **Memory**: footprint < 1 GB (model + runtime + mapping)
+- **Memory**: ~10 MB (regex-only mode) or ~946 MB RSS / ~2.1 GB peak during loading (ONNX active)
 - **Security**: mapping never persisted to disk, never logged, encrypted in memory

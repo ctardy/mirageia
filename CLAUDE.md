@@ -23,9 +23,10 @@ Intercepts requests to LLM APIs (Anthropic, OpenAI), detects sensitive data (PII
 
 ```
 Application (Claude Code, etc.)
+  [configured to use MirageIA as HTTP proxy — explicit client-side setup required]
        | request
 [MirageIA — single process]
-  |-- Embedded ONNX model (contextual PII detection)
+  |-- PII detection (regex by default; optional ONNX model for contextual detection)
   |-- Pseudonymization (replacement with fake values + mapping ID)
   |-- In-memory mapping table (AES-256 encrypted)
        | cleaned request
@@ -49,11 +50,11 @@ The LLM API never sees the real data. The response contains `Gerard` -> MirageIA
 
 ### Differentiators
 
-- **Embedded LLM**: no Ollama server or external service — a single autonomous binary (like Murmure embeds Whisper)
-- **Contextual detection**: the model understands context (won't mask "Thomas Edison" in a history lesson)
+- **No external server**: no Ollama or external inference service — single autonomous binary; ONNX model is an optional feature requiring a separate ~337 MB download
+- **Contextual detection** (optional): when the ONNX model is active, it understands context (won't mask "Thomas Edison" in a history lesson); default mode uses regex
 - **Reversible pseudonymization**: bidirectional mapping with IDs, not simple `[REDACTED]` masking
 - **SSE streaming**: compatible with LLM response streaming
-- **Zero config**: works out-of-the-box, the proxy sits between the app and the API
+- **Explicit proxy setup**: the client application must be configured to point to the proxy (e.g., `ANTHROPIC_BASE_URL=http://localhost:3100`); interception is not transparent
 
 ### Detected PII types
 
@@ -74,11 +75,11 @@ The LLM API never sees the real data. The response contains `Gerard` -> MirageIA
 
 | Component | Technology |
 |-----------|-----------|
-| Runtime | Rust + Tauri (single binary, cross-platform) |
-| PII Model | ONNX Runtime (DistilBERT-PII or Qwen3 0.6B quantized) |
+| Runtime | Rust (CLI binary, cross-platform) — Tauri removed |
+| PII Model | ONNX Runtime (optional feature, ~337 MB model downloaded separately) — regex detection by default |
 | HTTP Proxy | Man-in-the-middle interception (hyper / axum) |
 | Mapping | In-memory, AES-256-GCM encrypted, not persisted |
-| Interface | Tray icon + minimal local dashboard (Tauri webview) |
+| Interface | Integrated web dashboard (HTML/JS served by Axum at /dashboard) — no desktop interface |
 | Tests | cargo test + PII fixtures |
 
 ---
