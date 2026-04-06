@@ -227,8 +227,12 @@ UPSTREAM RESPONSE
     ▼
 [De-pseudonymize]    <- depseudonymizer.rs (AhoCorasick, longest-first)
     │                   or buffer.rs (streaming SSE, split between tokens)
+    │                   Note: complete tokens are restored. If the LLM
+    │                   decomposes a value char-by-char in an array, the
+    │                   pseudonymized chars remain — proof the real data
+    │                   never reached the API.
     ▼
-CLIENT RESPONSE (original data restored)
+CLIENT RESPONSE (original data restored for complete tokens)
 ```
 
 ---
@@ -236,7 +240,7 @@ CLIENT RESPONSE (original data restored)
 ## Tests
 
 ```bash
-# All tests (145)
+# All tests (233)
 cargo test
 
 # Unit tests only
@@ -256,23 +260,31 @@ cargo test -- pseudonymization
 | Module | Tests | Coverage |
 |---|---:|---|
 | config | 6 | Default config, TOML parsing, partial, empty, passthrough |
-| proxy/router | 7 | Anthropic/OpenAI routing, URLs |
+| proxy/router | 8 | Anthropic/OpenAI routing, URLs |
 | proxy/extractor | 9 | JSON extraction/rebuild, content string/array, system |
-| detection/types | 7 | Labels, thresholds, aliases, display |
-| detection/postprocess | 11 | Softmax, extraction, merging, multi-token, thresholds |
-| detection/tokenizer | 5 | Segmentation, overlap, progression |
-| detection/regex_detector | 16 | Email, IP, phone, CC, IBAN, API key, whitelist |
-| detection/model | 2 | Models directory, missing files |
+| detection/types | 8 | Labels, thresholds, aliases, display |
+| detection/postprocess | 13 | Softmax, extraction, merging, multi-token, thresholds |
+| detection/tokenizer | 6 | Segmentation, overlap, progression |
+| detection/regex_detector | 29 | Email, IP, phone, CC, IBAN, API key, password, whitelist |
+| detection/model | 2 + 7 | Models directory, missing files, model manager |
+| detection/validator | 18 | Luhn, MOD-97 IBAN, secret detection |
 | detection/mod | 4 | Label map loading |
+| extraction/pdf | 3 | PDF text extraction |
+| extraction/docx | 4 | DOCX text extraction |
+| extraction/tests | 6 | Multipart, nested content |
 | mapping/crypto | 6 | AES-256-GCM roundtrip, nonces, unicode |
-| mapping/table | 8 | Bidirectional, concurrent, unique IDs |
+| mapping/table | 9 | Bidirectional, concurrent, unique IDs |
 | pseudonymization/generator | 13 | All PII types, Luhn, format |
-| pseudonymization/replacer | 5 | Positions, session coherence |
+| pseudonymization/replacer | 9 | Positions, session coherence |
 | pseudonymization/depseudonymizer | 6 | Roundtrip, longest-first |
+| pseudonymization/fragment_restorer | 13 | IP octets, CC groups, NSS segments (SPB) |
+| pseudonymization/dictionaries | 2 | Name pools, uniqueness |
 | streaming/sse_parser | 7 | Anthropic, OpenAI, DONE, rebuild |
-| streaming/buffer | 7 | Split pseudonym, flush |
-| **e2e** | **12** | **Full pipeline, passthrough, SSE events, dashboard** |
-| **Total** | **145** | |
+| streaming/buffer | 8 | Split pseudonym, flush, phone with spaces |
+| setup/wizard | 6 | Config generation, shell detection |
+| update/tests | 5 | Version check, download |
+| **e2e** | **26** | **Full pipeline, passthrough, SSE, events, dashboard, PDF/DOCX, password** |
+| **Total** | **233** | |
 
 ---
 
@@ -291,7 +303,7 @@ cargo test -- pseudonymization
 | Monitoring console | Done | `mirageia console` (real-time SSE) |
 | Web dashboard | Done | `/dashboard` embedded in binary |
 | Docker + deployment | Done | Dockerfile, ops guide, Apache reverse proxy |
-| E2E tests | Done | 145 tests |
+| E2E tests | Done | 233 tests (207 unit + 26 e2e) |
 | Contextual ONNX detection | Structured | Code ready, ONNX Runtime blocked by MSVC toolchain |
 | Tauri dashboard | Planned | Phase 4 |
 
