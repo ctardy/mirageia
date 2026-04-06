@@ -288,7 +288,7 @@ async fn proxy_handler(
     }
 
     let upstream_url = router::upstream_url(provider, &path, &state.config)
-        .map_err(|e| ProxyError::Http(e))?;
+        .map_err(ProxyError::Http)?;
 
     // Copy relevant headers
     let mut upstream_headers = http::HeaderMap::new();

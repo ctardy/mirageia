@@ -1,6 +1,6 @@
 [package]
 name = "mirageia"
-version = "0.5.14"
+version = "0.5.15"
 edition = "2021"
 description = "Intelligent pseudonymization proxy for LLM APIs"
 license = "MIT"

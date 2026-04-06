@@ -211,10 +211,12 @@ fn validate_upstream_url(name: &str, url: &str) -> Result<(), String> {
         .ok_or_else(|| format!("Invalid {}: host is empty", name))?;
 
     // Reject known local / private hosts
+    // Note: url crate serializes IPv6 with brackets (e.g. "[::1]"), so we check both forms
     let blocked = [
         "localhost",
         "127.0.0.1",
         "::1",
+        "[::1]",
         "0.0.0.0",
     ];
     if blocked.iter().any(|b| host.eq_ignore_ascii_case(b)) {
