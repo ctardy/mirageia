@@ -28,22 +28,26 @@ pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
         replacements.push(orig.clone());
 
         // Char-array patterns: the LLM may decompose a pseudonym letter by letter.
-        // Two variants are needed:
-        // - Unescaped (`"c","h","a","r"`)  : SSE streaming (text delta already JSON-decoded)
-        // - JSON-escaped (`\"c\",\"h\",...`): non-streaming (depseudonymizer runs on raw JSON body)
+        // Four variants to cover all formatting styles:
+        // - Unescaped, no space  (`"c","h","a","r"`)    : SSE streaming, compact JSON
+        // - Unescaped, with space (`"c", "h", "a", "r"`): SSE streaming, pretty JSON (most LLMs)
+        // - JSON-escaped, no space  (`\"c\",\"h\",...`)  : non-streaming raw JSON, compact
+        // - JSON-escaped, with space (`\"c\", \"h\",..`): non-streaming raw JSON, pretty
         if pseudo.chars().count() >= 2 {
-            let pseudo_arr = char_array_repr(pseudo);
-            let orig_arr = char_array_repr(orig);
-            if pseudo_arr != orig_arr {
-                patterns.push(pseudo_arr);
-                replacements.push(orig_arr);
-            }
+            for sep in &[",", ", "] {
+                let pseudo_arr = char_array_repr_sep(pseudo, sep);
+                let orig_arr = char_array_repr_sep(orig, sep);
+                if pseudo_arr != orig_arr {
+                    patterns.push(pseudo_arr);
+                    replacements.push(orig_arr);
+                }
 
-            let pseudo_arr_json = char_array_repr_json_escaped(pseudo);
-            let orig_arr_json = char_array_repr_json_escaped(orig);
-            if pseudo_arr_json != orig_arr_json {
-                patterns.push(pseudo_arr_json);
-                replacements.push(orig_arr_json);
+                let pseudo_arr_json = char_array_repr_json_escaped_sep(pseudo, sep);
+                let orig_arr_json = char_array_repr_json_escaped_sep(orig, sep);
+                if pseudo_arr_json != orig_arr_json {
+                    patterns.push(pseudo_arr_json);
+                    replacements.push(orig_arr_json);
+                }
             }
         }
     }
@@ -64,24 +68,31 @@ pub fn depseudonymize_text(text: &str, mapping: &MappingTable) -> String {
 }
 
 /// Builds the char-array representation of a string as it would appear in a JSON array.
-/// e.g., "abc" → `"a","b","c"`
-/// e.g., "+33 6" → `"+","3","3"," ","6"`
+/// e.g., "abc" → `"a","b","c"` (sep=",") or `"a", "b", "c"` (sep=", ")
 /// Used for SSE streaming (text deltas are already JSON-decoded).
 pub fn char_array_repr(s: &str) -> String {
+    char_array_repr_sep(s, ",")
+}
+
+pub fn char_array_repr_sep(s: &str, sep: &str) -> String {
     s.chars()
         .map(|c| format!("\"{}\"", c))
         .collect::<Vec<_>>()
-        .join(",")
+        .join(sep)
 }
 
 /// Builds the char-array representation with JSON-escaped quotes.
-/// e.g., "abc" → `\"a\",\"b\",\"c\"`
+/// e.g., "abc" → `\"a\",\"b\",\"c\"` (sep=",") or `\"a\", \"b\", \"c\"` (sep=", ")
 /// Used for non-streaming responses where depseudonymization runs on the raw JSON body.
 pub fn char_array_repr_json_escaped(s: &str) -> String {
+    char_array_repr_json_escaped_sep(s, ",")
+}
+
+pub fn char_array_repr_json_escaped_sep(s: &str, sep: &str) -> String {
     s.chars()
         .map(|c| format!("\\\"{}\\\"", c))
         .collect::<Vec<_>>()
-        .join(",")
+        .join(sep)
 }
 
 #[cfg(test)]
@@ -178,13 +189,22 @@ mod tests {
             .insert("jean.dupont@gmail.com", "sophie@example.com", PiiType::Email)
             .unwrap();
 
-        // SSE streaming form
+        // SSE streaming form — compact (no space after comma)
         let text = r#""email": ["s","o","p","h","i","e","@","e","x","a","m","p","l","e",".","c","o","m"]"#;
         let result = depseudonymize_text(text, &mapping);
         assert!(
             result.contains(r#""j","e","a","n",".","d","u","p","o","n","t","@","g","m","a","i","l",".","c","o","m""#),
-            "Les chars de l'email original doivent être restaurés. Reçu: {}",
+            "Compact: les chars de l'email original doivent être restaurés. Reçu: {}",
             result
+        );
+
+        // SSE streaming form — pretty-printed (space after comma, as most LLMs produce)
+        let text_pretty = r#""email": ["s", "o", "p", "h", "i", "e", "@", "e", "x", "a", "m", "p", "l", "e", ".", "c", "o", "m"]"#;
+        let result_pretty = depseudonymize_text(text_pretty, &mapping);
+        assert!(
+            result_pretty.contains(r#""j", "e", "a", "n", ".", "d", "u", "p", "o", "n", "t", "@", "g", "m", "a", "i", "l", ".", "c", "o", "m""#),
+            "Pretty: les chars de l'email original doivent être restaurés. Reçu: {}",
+            result_pretty
         );
     }
 

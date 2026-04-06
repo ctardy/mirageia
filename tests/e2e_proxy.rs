@@ -1222,14 +1222,16 @@ async fn test_depseudonymize_char_array_in_response() {
     // The upstream received the pseudonymized email and returned it char by char.
     // MirageIA must replace those chars with the original email chars in the response.
     // The response body is raw JSON, so quotes are JSON-escaped: \"a\",\"l\",...
-    let orig_chars_json: Vec<String> = "alice@corp.com"
+    // Two separator styles are accepted: compact (",") and pretty (", ").
+    let orig_chars: Vec<String> = "alice@corp.com"
         .chars()
         .map(|c| format!("\\\"{}\\\"", c))
         .collect();
-    let orig_char_str_json = orig_chars_json.join(",");
+    let orig_char_str_compact = orig_chars.join(",");
+    let orig_char_str_pretty = orig_chars.join(", ");
     assert!(
-        response_text.contains(&orig_char_str_json),
-        "Les chars de l'email original doivent être dans la réponse (forme JSON-échappée). Reçu: {}",
+        response_text.contains(&orig_char_str_compact) || response_text.contains(&orig_char_str_pretty),
+        "Les chars de l'email original doivent être dans la réponse (JSON-échappée compact ou pretty). Reçu: {}",
         response_text
     );
 
@@ -1243,11 +1245,12 @@ async fn test_depseudonymize_char_array_in_response() {
         .to_string();
     let pseudo_value = pseudo_email.trim_start_matches("Mon email est ").trim();
     if pseudo_value != "alice@corp.com" {
-        let pseudo_chars_json: Vec<String> =
+        let pseudo_chars: Vec<String> =
             pseudo_value.chars().map(|c| format!("\\\"{}\\\"", c)).collect();
-        let pseudo_char_str_json = pseudo_chars_json.join(",");
+        let pseudo_compact = pseudo_chars.join(",");
+        let pseudo_pretty = pseudo_chars.join(", ");
         assert!(
-            !response_text.contains(&pseudo_char_str_json),
+            !response_text.contains(&pseudo_compact) && !response_text.contains(&pseudo_pretty),
             "Les chars pseudonymisés ne doivent PAS être dans la réponse. Reçu: {}",
             response_text
         );
