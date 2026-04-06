@@ -5,4 +5,7 @@ pub enum MappingError {
 
     #[error("Erreur de déchiffrement : {0}")]
     Decryption(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }

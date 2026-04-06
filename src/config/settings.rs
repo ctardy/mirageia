@@ -1,5 +1,6 @@
 use std::env;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use serde::Deserialize;
 
@@ -23,6 +24,9 @@ pub struct AppConfig {
     /// ONNX model name to use for contextual PII detection (e.g. "iiiorg/piiranha-v1-detect-personal-information").
     /// If None, falls back to the active model configured via `mirageia model use`.
     pub model_name: Option<String>,
+    /// Optional bearer token required on all LLM proxy requests.
+    /// If None, authentication is disabled.
+    pub proxy_token: Option<String>,
 }
 
 /// Structure of the config.toml file (deserializable).
@@ -43,6 +47,7 @@ struct ProxyFileConfig {
     add_header: Option<bool>,
     fail_open: Option<bool>,
     passthrough: Option<bool>,
+    proxy_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -69,6 +74,7 @@ impl Default for AppConfig {
             fail_open: true,
             passthrough: false,
             model_name: None,
+            proxy_token: None,
         }
     }
 }
@@ -100,6 +106,9 @@ impl AppConfig {
             }
             if let Some(pt) = file_config.proxy.passthrough {
                 config.passthrough = pt;
+            }
+            if let Some(token) = file_config.proxy.proxy_token {
+                config.proxy_token = Some(token);
             }
             if !file_config.detection.whitelist.is_empty() {
                 // Merge with the default whitelist (loopback, etc.)
@@ -133,6 +142,9 @@ impl AppConfig {
         if let Ok(name) = env::var("MIRAGEIA_MODEL_NAME") {
             config.model_name = Some(name);
         }
+        if let Ok(token) = env::var("MIRAGEIA_PROXY_TOKEN") {
+            config.proxy_token = Some(token);
+        }
 
         config
     }
@@ -140,6 +152,17 @@ impl AppConfig {
     /// Alias for compatibility (used in main.rs).
     pub fn from_env() -> Self {
         Self::load()
+    }
+
+    /// Validates the configuration, returning an error if any upstream URL is unsafe.
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, url) in [
+            ("anthropic_base_url", &self.anthropic_base_url),
+            ("openai_base_url", &self.openai_base_url),
+        ] {
+            validate_upstream_url(name, url)?;
+        }
+        Ok(())
     }
 
     /// Path to the config file: ~/.mirageia/config.toml
@@ -161,6 +184,64 @@ impl AppConfig {
             }
         }
     }
+}
+
+/// Validates that an upstream URL is safe to use as a proxy target.
+///
+/// Rejects localhost, loopback, private IPv4 ranges, IPv6 loopback, and cloud
+/// metadata addresses to prevent SSRF attacks.
+fn validate_upstream_url(name: &str, url: &str) -> Result<(), String> {
+    let parsed = url::Url::from_str(url)
+        .map_err(|e| format!("Invalid {}: cannot parse URL: {}", name, e))?;
+
+    // Only http and https are valid upstream schemes
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(format!(
+                "Invalid {}: scheme '{}' is not allowed (use http or https)",
+                name, scheme
+            ));
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| format!("Invalid {}: host is empty", name))?;
+
+    // Reject known local / private hosts
+    let blocked = [
+        "localhost",
+        "127.0.0.1",
+        "::1",
+        "0.0.0.0",
+    ];
+    if blocked.iter().any(|b| host.eq_ignore_ascii_case(b)) {
+        return Err(format!(
+            "Invalid {}: host '{}' is a local/loopback address",
+            name, host
+        ));
+    }
+
+    // Reject private IPv4 ranges and cloud metadata address
+    let private_prefixes = [
+        "10.",
+        "192.168.",
+        "172.16.", "172.17.", "172.18.", "172.19.",
+        "172.20.", "172.21.", "172.22.", "172.23.",
+        "172.24.", "172.25.", "172.26.", "172.27.",
+        "172.28.", "172.29.", "172.30.", "172.31.",
+        "169.254.",
+    ];
+    if private_prefixes.iter().any(|prefix| host.starts_with(prefix)) {
+        return Err(format!(
+            "Invalid {}: host '{}' resolves to a private/reserved IP range",
+            name, host
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -245,5 +326,67 @@ passthrough = true
             path.ends_with(".mirageia/config.toml")
                 || path.ends_with(".mirageia\\config.toml")
         );
+    }
+
+    // --- validate_upstream_url tests ---
+
+    #[test]
+    fn test_validate_valid_https_url() {
+        assert!(validate_upstream_url("anthropic_base_url", "https://api.anthropic.com").is_ok());
+        assert!(validate_upstream_url("openai_base_url", "https://api.openai.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_valid_http_url() {
+        assert!(validate_upstream_url("test", "http://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_localhost() {
+        assert!(validate_upstream_url("test", "http://localhost:8080").is_err());
+        assert!(validate_upstream_url("test", "https://127.0.0.1/api").is_err());
+        assert!(validate_upstream_url("test", "http://0.0.0.0").is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_ipv6_loopback() {
+        assert!(validate_upstream_url("test", "http://[::1]/api").is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_private_ipv4() {
+        assert!(validate_upstream_url("test", "http://10.0.0.1").is_err());
+        assert!(validate_upstream_url("test", "http://192.168.1.1").is_err());
+        assert!(validate_upstream_url("test", "http://172.16.0.1").is_err());
+        assert!(validate_upstream_url("test", "http://172.31.255.255").is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_cloud_metadata() {
+        assert!(validate_upstream_url("test", "http://169.254.169.254/latest/meta-data").is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_scheme() {
+        assert!(validate_upstream_url("test", "file:///etc/passwd").is_err());
+        assert!(validate_upstream_url("test", "ftp://example.com").is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_unparseable_url() {
+        assert!(validate_upstream_url("test", "not a url").is_err());
+    }
+
+    #[test]
+    fn test_appconfig_validate_default() {
+        let config = AppConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_appconfig_validate_rejects_ssrf() {
+        let mut config = AppConfig::default();
+        config.anthropic_base_url = "http://169.254.169.254/latest/meta-data".to_string();
+        assert!(config.validate().is_err());
     }
 }

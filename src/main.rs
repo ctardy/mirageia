@@ -154,6 +154,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tracing::info!("MirageIA v{}", env!("CARGO_PKG_VERSION"));
 
+            // Validate upstream URLs before starting — reject SSRF-prone configs
+            if let Err(e) = config.validate() {
+                tracing::error!("Configuration invalide : {}", e);
+                eprintln!("Configuration error: {}", e);
+                std::process::exit(1);
+            }
+
             // Background update check (silent)
             mirageia::update::spawn_background_check();
 

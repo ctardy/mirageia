@@ -21,13 +21,29 @@ pub fn resolve_provider(path: &str) -> Option<Provider> {
 }
 
 /// Builds the full upstream URL for the given provider.
-pub fn upstream_url(provider: Provider, path: &str, config: &AppConfig) -> String {
+///
+/// Returns an error if the constructed URL has an invalid scheme (not http/https).
+pub fn upstream_url(provider: Provider, path: &str, config: &AppConfig) -> Result<String, String> {
     let base = match provider {
         Provider::Anthropic => &config.anthropic_base_url,
         Provider::OpenAI => &config.openai_base_url,
     };
 
-    format!("{}{}", base.trim_end_matches('/'), path)
+    let url = format!("{}{}", base.trim_end_matches('/'), path);
+
+    // Light validation: confirm the scheme is http or https
+    let scheme_end = url.find("://").ok_or_else(|| {
+        format!("Invalid upstream URL '{}': missing scheme", url)
+    })?;
+    let scheme = &url[..scheme_end];
+    if scheme != "http" && scheme != "https" {
+        return Err(format!(
+            "Invalid upstream URL '{}': scheme '{}' is not allowed",
+            url, scheme
+        ));
+    }
+
+    Ok(url)
 }
 
 #[cfg(test)]
@@ -71,14 +87,14 @@ mod tests {
     #[test]
     fn test_upstream_url_anthropic() {
         let config = AppConfig::default();
-        let url = upstream_url(Provider::Anthropic, "/v1/messages", &config);
+        let url = upstream_url(Provider::Anthropic, "/v1/messages", &config).unwrap();
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
     }
 
     #[test]
     fn test_upstream_url_openai() {
         let config = AppConfig::default();
-        let url = upstream_url(Provider::OpenAI, "/v1/chat/completions", &config);
+        let url = upstream_url(Provider::OpenAI, "/v1/chat/completions", &config).unwrap();
         assert_eq!(url, "https://api.openai.com/v1/chat/completions");
     }
 
@@ -86,7 +102,15 @@ mod tests {
     fn test_upstream_url_trailing_slash() {
         let mut config = AppConfig::default();
         config.anthropic_base_url = "https://api.anthropic.com/".to_string();
-        let url = upstream_url(Provider::Anthropic, "/v1/messages", &config);
+        let url = upstream_url(Provider::Anthropic, "/v1/messages", &config).unwrap();
         assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_upstream_url_invalid_scheme() {
+        let mut config = AppConfig::default();
+        config.anthropic_base_url = "file:///etc/passwd".to_string();
+        let result = upstream_url(Provider::Anthropic, "/v1/messages", &config);
+        assert!(result.is_err());
     }
 }

@@ -267,7 +267,28 @@ async fn proxy_handler(
     let provider = router::resolve_provider(&path)
         .ok_or_else(|| ProxyError::UnknownProvider(path.clone()))?;
 
-    let upstream_url = router::upstream_url(provider, &path, &state.config);
+    // Bearer token authentication (optional — only if proxy_token is configured)
+    if let Some(expected_token) = &state.config.proxy_token {
+        let authorized = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|token| token == expected_token)
+            .unwrap_or(false);
+
+        if !authorized {
+            tracing::warn!("Unauthorized request rejected — missing or invalid bearer token");
+            let error_body = serde_json::json!({
+                "error": "unauthorized",
+                "message": "Bearer token required",
+            });
+            return Ok((StatusCode::UNAUTHORIZED, axum::Json(error_body)).into_response());
+        }
+    }
+
+    let upstream_url = router::upstream_url(provider, &path, &state.config)
+        .map_err(|e| ProxyError::Http(e))?;
 
     // Copy relevant headers
     let mut upstream_headers = http::HeaderMap::new();
@@ -356,12 +377,28 @@ async fn proxy_handler(
             result
         }
         Err(e) => {
-            tracing::warn!("Pseudonymisation échouée, passthrough : {}", e);
-            PseudonymizeResult {
-                body: body_bytes.to_vec(),
-                was_pseudonymized: false,
-                pii_count: 0,
-                pii_types: Vec::new(),
+            if state.config.fail_open {
+                tracing::warn!(
+                    "[SECURITY WARNING] Pseudonymization failed — forwarding unmasked request: {}",
+                    e
+                );
+                PseudonymizeResult {
+                    body: body_bytes.to_vec(),
+                    was_pseudonymized: false,
+                    pii_count: 0,
+                    pii_types: Vec::new(),
+                }
+            } else {
+                let error_body = serde_json::json!({
+                    "error": "pseudonymization_failed",
+                    "message": format!("{}", e),
+                });
+                let response = (
+                    StatusCode::BAD_GATEWAY,
+                    axum::Json(error_body),
+                )
+                    .into_response();
+                return Ok(response);
             }
         }
     };

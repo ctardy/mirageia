@@ -8,6 +8,10 @@ use crate::detection::PiiType;
 use crate::mapping::crypto::CryptoEngine;
 use crate::mapping::error::MappingError;
 
+fn lock_write_err() -> MappingError {
+    MappingError::Internal("RwLock poisoned (write)".to_string())
+}
+
 /// Entry in the mapping table.
 #[derive(Debug, Clone)]
 pub struct MappingEntry {
@@ -48,7 +52,10 @@ impl MappingTable {
     /// Checks whether a pseudonym already exists for this original value.
     pub fn lookup_original(&self, original: &str) -> Option<String> {
         let hash = Self::hash_original(original);
-        let map = self.by_original_hash.read().unwrap();
+        let map = self.by_original_hash.read().unwrap_or_else(|e| {
+            tracing::error!("RwLock poisoned (read) in lookup_original: {}", e);
+            e.into_inner()
+        });
         map.get(&hash).map(|entry| entry.pseudonym.clone())
     }
 
@@ -72,11 +79,11 @@ impl MappingTable {
         };
 
         {
-            let mut by_orig = self.by_original_hash.write().unwrap();
+            let mut by_orig = self.by_original_hash.write().map_err(|_| lock_write_err())?;
             by_orig.insert(hash, entry.clone());
         }
         {
-            let mut by_pseudo = self.by_pseudonym.write().unwrap();
+            let mut by_pseudo = self.by_pseudonym.write().map_err(|_| lock_write_err())?;
             by_pseudo.insert(pseudonym.to_string(), entry);
         }
 
@@ -86,7 +93,10 @@ impl MappingTable {
     /// Looks up the original value for a given pseudonym.
     /// Decrypts the value before returning it.
     pub fn lookup_pseudonym(&self, pseudonym: &str) -> Option<String> {
-        let map = self.by_pseudonym.read().unwrap();
+        let map = self.by_pseudonym.read().unwrap_or_else(|e| {
+            tracing::error!("RwLock poisoned (read) in lookup_pseudonym: {}", e);
+            e.into_inner()
+        });
         map.get(pseudonym).and_then(|entry| {
             self.crypto
                 .decrypt(&entry.encrypted_original)
@@ -97,7 +107,10 @@ impl MappingTable {
     /// Returns all known pseudonyms with their decrypted original value.
     /// Sorted by descending pseudonym length (for priority replacement).
     pub fn all_pseudonyms_sorted(&self) -> Vec<(String, String)> {
-        let map = self.by_pseudonym.read().unwrap();
+        let map = self.by_pseudonym.read().unwrap_or_else(|e| {
+            tracing::error!("RwLock poisoned (read) in all_pseudonyms_sorted: {}", e);
+            e.into_inner()
+        });
         let mut pairs: Vec<(String, String)> = map
             .iter()
             .filter_map(|(pseudo, entry)| {
@@ -116,7 +129,10 @@ impl MappingTable {
     /// Returns all pseudonyms with their original value and PII type.
     /// Sorted by descending pseudonym length.
     pub fn all_entries_with_type(&self) -> Vec<(String, String, PiiType)> {
-        let map = self.by_pseudonym.read().unwrap();
+        let map = self.by_pseudonym.read().unwrap_or_else(|e| {
+            tracing::error!("RwLock poisoned (read) in all_entries_with_type: {}", e);
+            e.into_inner()
+        });
         let mut entries: Vec<(String, String, PiiType)> = map
             .iter()
             .filter_map(|(pseudo, entry)| {
@@ -133,7 +149,13 @@ impl MappingTable {
 
     /// Number of entries in the table.
     pub fn len(&self) -> usize {
-        self.by_original_hash.read().unwrap().len()
+        self.by_original_hash
+            .read()
+            .unwrap_or_else(|e| {
+                tracing::error!("RwLock poisoned (read) in len: {}", e);
+                e.into_inner()
+            })
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
