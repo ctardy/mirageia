@@ -14,7 +14,7 @@ chmod 700 /root/.claude /root/.local/share/keyrings 2>/dev/null || true
 # Télécharger la dernière version de MirageIA à chaque démarrage
 echo "  → Téléchargement de la dernière version MirageIA..."
 curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-linux-x86_64.tar.gz \
-    | tar xz -C /usr/local/bin/ \
+    | tar xz --no-same-owner -C /usr/local/bin/ \
     && chmod +x /usr/local/bin/mirageia
 
 echo "  ✓ MirageIA $(mirageia --version)"

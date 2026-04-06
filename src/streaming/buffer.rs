@@ -46,12 +46,39 @@ impl StreamBuffer {
 
         // We can flush the beginning of the buffer (keep the end in reserve)
         let flush_up_to = self.buffer.len() - self.max_pseudonym_len;
+        let pairs = mapping.all_pseudonyms_sorted();
 
-        // Find the safest cut point (end of word), respecting UTF-8 boundaries
-        let cut_point = self.buffer[..flush_up_to]
+        // Find the safest cut point: last whitespace before flush_up_to that does NOT
+        // land inside a known pseudonym occurrence. This prevents splitting phone numbers
+        // or other PII values that contain spaces (e.g., "+33 6 12 34 56 78").
+        let buf_snapshot = self.buffer.clone();
+        let cut_point = buf_snapshot[..flush_up_to]
             .char_indices()
             .rev()
-            .find(|(_, c)| c.is_whitespace())
+            .find(|(pos, c)| {
+                if !c.is_whitespace() {
+                    return false;
+                }
+                let cut = *pos + c.len_utf8();
+                // Reject this cut if it falls inside any pseudonym occurrence
+                !pairs.iter().any(|(pseudo, _)| {
+                    let plen = pseudo.len();
+                    if plen < 2 {
+                        return false;
+                    }
+                    // Search only within the window around the cut point
+                    let win_start = cut.saturating_sub(plen);
+                    let win_end = (cut + plen).min(buf_snapshot.len());
+                    let window = &buf_snapshot[win_start..win_end];
+                    if let Some(rel) = window.find(pseudo.as_str()) {
+                        let abs_start = win_start + rel;
+                        let abs_end = abs_start + plen;
+                        abs_start < cut && abs_end > cut
+                    } else {
+                        false
+                    }
+                })
+            })
             .map(|(pos, c)| pos + c.len_utf8())
             .unwrap_or(flush_up_to);
 
@@ -164,6 +191,40 @@ mod tests {
         let flushed = buffer.push("", &mapping);
         assert_eq!(flushed, "");
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_phone_with_spaces_not_split() {
+        let mapping = MappingTable::new();
+        // Phone pseudonym contains spaces — must not be cut in the middle
+        mapping
+            .insert("+33 6 12 34 56 78", "+64 8 41 49 48 34", crate::detection::PiiType::PhoneNumber)
+            .unwrap();
+
+        // Reserve = max(18, 18*4+1=73) = 73 chars
+        // Use a buffer reserve matching what server.rs computes
+        let max_len = "+64 8 41 49 48 34".chars().count() * 4 + 1;
+        let mut buffer = StreamBuffer::new(max_len);
+
+        // Simulate streaming: long prefix + phone split across chunks
+        let mut total = String::new();
+        let prefix = "Bonjour, votre numéro de téléphone est ".repeat(3); // ~120 chars, forces flush
+        total.push_str(&buffer.push(&prefix, &mapping));
+        total.push_str(&buffer.push("+64 8 41 ", &mapping));
+        total.push_str(&buffer.push("49 48 34", &mapping));
+        total.push_str(&buffer.push(" merci.", &mapping));
+        total.push_str(&buffer.flush_remaining(&mapping));
+
+        assert!(
+            total.contains("+33 6 12 34 56 78"),
+            "Le téléphone original doit être restauré. Reçu: {}",
+            total
+        );
+        assert!(
+            !total.contains("+64 8 41 49 48 34"),
+            "Le pseudonyme ne doit plus apparaître. Reçu: {}",
+            total
+        );
     }
 
     #[test]

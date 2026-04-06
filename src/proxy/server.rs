@@ -566,11 +566,17 @@ async fn build_depseudonymized_response(
         let mapping = Arc::clone(&state.mapping);
         let byte_stream = upstream.bytes_stream();
 
-        // Compute the max pseudonym length for the buffer
+        // Compute the max pseudonym length for the buffer.
+        // Char-array patterns (e.g. `"c","h","a","r",...`) are ~4× the pseudonym length,
+        // so reserve enough space to avoid splitting them across flush boundaries.
         let max_pseudo_len = mapping
             .all_pseudonyms_sorted()
             .first()
-            .map(|(p, _)| p.len())
+            .map(|(p, _)| {
+                let basic = p.len();
+                let chararray = p.chars().count() * 4 + 1;
+                basic.max(chararray)
+            })
             .unwrap_or(0)
             .max(50);
 

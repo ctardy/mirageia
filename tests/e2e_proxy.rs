@@ -1130,3 +1130,164 @@ async fn test_events_passthrough_contain_enriched_fields() {
     assert_eq!(resp_event.status_code.unwrap(), 200);
     assert!(resp_event.duration_ms.is_some());
 }
+
+// ─── Tests décomposition char-par-char (regression) ───────────────────────────
+
+/// Vérifie que lorsque l'upstream retourne une valeur pseudonymisée décomposée
+/// caractère par caractère (format JSON `["c","h","a","r",...]`), MirageIA
+/// ré-injecte les caractères originaux dans la réponse.
+///
+/// Scénario testé :
+///   - Requête contient un email réel
+///   - Mock upstream reçoit le pseudonyme et le renvoie DÉCOMPOSÉ en chars
+///   - La réponse client doit contenir les chars de l'email ORIGINAL
+#[tokio::test]
+async fn test_depseudonymize_char_array_in_response() {
+    // Custom mock: captures the pseudonymized value from the request and
+    // returns it decomposed character by character in the response.
+    let captured = Arc::new(tokio::sync::Mutex::new(None::<serde_json::Value>));
+    let captured_clone = captured.clone();
+
+    let app = Router::new().fallback(move |request: Request<Body>| {
+        let cap = captured_clone.clone();
+        async move {
+            let body_bytes = axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024)
+                .await
+                .unwrap();
+            let body_json: serde_json::Value =
+                serde_json::from_slice(&body_bytes).unwrap_or(serde_json::Value::Null);
+
+            // Extract the pseudonymized email from the request
+            let content = body_json["messages"][0]["content"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+
+            *cap.lock().await = Some(body_json);
+
+            // Build a response that decomposes the content char by char (simulates the LLM)
+            let char_array: Vec<String> =
+                content.chars().map(|c| format!("\"{}\"", c)).collect();
+            let char_array_str = char_array.join(",");
+            let echo_text = format!("Décomposition: [{}]", char_array_str);
+
+            let response = serde_json::json!({
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": echo_text}]
+            });
+
+            (
+                axum::http::StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&response).unwrap(),
+            )
+                .into_response()
+        }
+    });
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 500,
+        "messages": [{
+            "role": "user",
+            "content": "Mon email est alice@corp.com"
+        }]
+    });
+
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
+    let response_text = resp.text().await.unwrap();
+
+    // The upstream received the pseudonymized email and returned it char by char.
+    // MirageIA must replace those chars with the original email chars in the response.
+    // The response body is raw JSON, so quotes are JSON-escaped: \"a\",\"l\",...
+    let orig_chars_json: Vec<String> = "alice@corp.com"
+        .chars()
+        .map(|c| format!("\\\"{}\\\"", c))
+        .collect();
+    let orig_char_str_json = orig_chars_json.join(",");
+    assert!(
+        response_text.contains(&orig_char_str_json),
+        "Les chars de l'email original doivent être dans la réponse (forme JSON-échappée). Reçu: {}",
+        response_text
+    );
+
+    // The pseudonymized email chars must NOT appear (JSON-escaped form)
+    let captured_req = captured.lock().await;
+    let pseudo_email = captured_req
+        .as_ref()
+        .unwrap()["messages"][0]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let pseudo_value = pseudo_email.trim_start_matches("Mon email est ").trim();
+    if pseudo_value != "alice@corp.com" {
+        let pseudo_chars_json: Vec<String> =
+            pseudo_value.chars().map(|c| format!("\\\"{}\\\"", c)).collect();
+        let pseudo_char_str_json = pseudo_chars_json.join(",");
+        assert!(
+            !response_text.contains(&pseudo_char_str_json),
+            "Les chars pseudonymisés ne doivent PAS être dans la réponse. Reçu: {}",
+            response_text
+        );
+    }
+}
+
+/// Vérifie que la ré-injection fonctionne pour un numéro de téléphone (qui contient
+/// des espaces) dans une réponse non-streaming : le pseudonyme doit être replacé
+/// par la valeur originale même si le numéro est coupé entre tokens.
+#[tokio::test]
+async fn test_depseudonymize_phone_in_response() {
+    let (upstream_addr, _) = start_mock_upstream().await;
+    let proxy_addr = start_proxy(upstream_addr).await;
+
+    let client = reqwest::Client::new();
+    let request_body = serde_json::json!({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 100,
+        "messages": [{
+            "role": "user",
+            "content": "Mon téléphone est +33 6 12 34 56 78 merci"
+        }]
+    });
+
+    let resp = client
+        .post(format!("http://{}/v1/messages", proxy_addr))
+        .header("content-type", "application/json")
+        .header("x-api-key", "test-key")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+
+    let response_text = resp.text().await.unwrap();
+
+    assert!(
+        response_text.contains("+33 6 12 34 56 78"),
+        "Le téléphone original doit être restauré dans la réponse. Reçu: {}",
+        response_text
+    );
+}
