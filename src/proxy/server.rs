@@ -567,14 +567,15 @@ async fn build_depseudonymized_response(
         let byte_stream = upstream.bytes_stream();
 
         // Compute the max pseudonym length for the buffer.
-        // Char-array patterns (e.g. `"c","h","a","r",...`) are ~4× the pseudonym length,
-        // so reserve enough space to avoid splitting them across flush boundaries.
+        // Four char-array variants are generated; the longest is the JSON-escaped
+        // pretty-printed form: each char becomes `\"c\", ` (6 chars), so ~chars*6.
+        // Use chars*7 for a safety margin.
         let max_pseudo_len = mapping
             .all_pseudonyms_sorted()
             .first()
             .map(|(p, _)| {
                 let basic = p.len();
-                let chararray = p.chars().count() * 4 + 1;
+                let chararray = p.chars().count() * 7;
                 basic.max(chararray)
             })
             .unwrap_or(0)
