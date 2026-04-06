@@ -122,8 +122,9 @@ MirageIA works without configuration (zero config). To customize, create `~/.mir
 listen_addr = "127.0.0.1:3100"  # Listening address
 log_level = "info"               # debug, info, warn, error
 add_header = false               # Add X-MirageIA: active header to requests
-fail_open = true                 # Forward request if pseudonymization fails
+fail_open = true                 # true = forward unmasked on error (logs warning); false = return HTTP 502
 passthrough = false              # Passthrough mode: relay without pseudonymizing
+proxy_token = ""                 # Optional bearer token (leave empty to disable auth)
 
 [detection]
 confidence_threshold = 0.75      # Confidence threshold (0.0-1.0)
@@ -143,6 +144,7 @@ Environment variables take precedence over the file:
 | `MIRAGEIA_OPENAI_URL` | OpenAI base URL |
 | `MIRAGEIA_LOG_LEVEL` | Log level |
 | `MIRAGEIA_PASSTHROUGH` | Enable passthrough mode (any value = enabled) |
+| `MIRAGEIA_PROXY_TOKEN` | Bearer token required on all LLM requests (optional) |
 
 ---
 

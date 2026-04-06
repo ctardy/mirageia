@@ -434,12 +434,60 @@ The `--restart unless-stopped` flag ensures restart after a crash or server rebo
 - The MirageIA binary has **no network dependency** other than the target LLM APIs
 - No telemetry, no calls to third-party servers
 
+### Bearer token authentication (v0.5.15+)
+
+Protect the proxy against unauthorized use with an optional bearer token:
+
+```bash
+# Via environment variable
+MIRAGEIA_PROXY_TOKEN=your-secret-token
+
+# Via config.toml
+[proxy]
+proxy_token = "your-secret-token"
+```
+
+When set, all LLM requests (`/v1/messages`, `/v1/chat/completions`, etc.) must include:
+```
+Authorization: Bearer your-secret-token
+```
+
+Requests without a valid token receive `HTTP 401 {"error": "unauthorized"}`.
+
+`/health`, `/dashboard`, `/events`, and `/shutdown` are exempt from authentication.
+
+### Fail-safe mode (v0.5.15+)
+
+By default, if pseudonymization fails (e.g. internal error), the proxy forwards the request unmasked (`fail_open = true`) with a `[SECURITY WARNING]` log entry.
+
+To block instead of forward on error:
+
+```toml
+# config.toml
+[proxy]
+fail_open = false
+```
+
+With `fail_open = false`, a pseudonymization error returns `HTTP 502 {"error": "pseudonymization_failed"}` — the request is never sent to the LLM API.
+
+### SSRF protection (v0.5.15+)
+
+The proxy validates `anthropic_base_url` and `openai_base_url` at startup and rejects:
+- Loopback addresses: `localhost`, `127.0.0.1`, `::1`, `0.0.0.0`
+- Private IPv4 ranges: `10.x`, `192.168.x`, `172.16-31.x`
+- Cloud metadata: `169.254.x`
+- Non-HTTP/HTTPS schemes
+
+Invalid configuration causes an immediate startup error.
+
 ### Recommendations
 
 - Protect `/dashboard` by IP or authentication (see Apache config above)
 - Do not expose port 3100 directly -- always go through Apache/HTTPS
 - Use a dedicated Docker network if other containers are running on the server
 - Store the API key in a secret manager (Docker secrets, Vault) rather than as an env variable
+- Set `MIRAGEIA_PROXY_TOKEN` in shared or multi-user environments
+- Set `fail_open = false` if unmasked forwarding is unacceptable for your use case
 
 ---
 
