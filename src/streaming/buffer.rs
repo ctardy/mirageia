@@ -48,15 +48,22 @@ impl StreamBuffer {
         let flush_up_to = self.buffer.len() - self.max_pseudonym_len;
         let pairs = mapping.all_pseudonyms_sorted();
 
-        // Find the safest cut point: last whitespace before flush_up_to that does NOT
-        // land inside a known pseudonym occurrence. This prevents splitting phone numbers
-        // or other PII values that contain spaces (e.g., "+33 6 12 34 56 78").
+        // Find the safest cut point: last whitespace before flush_up_to that does NOT:
+        // 1. Land inside a known pseudonym occurrence (e.g., phone "+33 6 12 34 56 78")
+        // 2. Land immediately after a `"` character — that means the space is INSIDE a
+        //    quoted JSON array element like `" "` (the space char in a char-by-char
+        //    decomposition). Cutting there would split the char-array pattern.
         let buf_snapshot = self.buffer.clone();
+        let buf_bytes = buf_snapshot.as_bytes();
         let cut_point = buf_snapshot[..flush_up_to]
             .char_indices()
             .rev()
             .find(|(pos, c)| {
                 if !c.is_whitespace() {
+                    return false;
+                }
+                // Skip whitespace that is immediately preceded by `"` (inside a quoted element)
+                if *pos > 0 && buf_bytes.get(*pos - 1) == Some(&b'"') {
                     return false;
                 }
                 let cut = *pos + c.len_utf8();
@@ -191,6 +198,34 @@ mod tests {
         let flushed = buffer.push("", &mapping);
         assert_eq!(flushed, "");
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_buffer_no_cut_inside_quoted_space() {
+        // The space in `" "` (space as a quoted JSON array element) must NOT be a cut point.
+        // If cut there, the char-array pattern "+","5","8"," ","2",... is split and missed.
+        let mapping = MappingTable::new();
+        mapping
+            .insert("+33 6 12 34 56 78", "+58 2 48 37 03 58", crate::detection::PiiType::PhoneNumber)
+            .unwrap();
+
+        let max_len = "+58 2 48 37 03 58".chars().count() * 7;
+        let mut buffer = StreamBuffer::new(max_len);
+
+        let mut total = String::new();
+        // Long prefix forces progressive flushing
+        let prefix = "Voici vos informations: ".repeat(6);
+        total.push_str(&buffer.push(&prefix, &mapping));
+        // Push the char array with a quoted space element
+        total.push_str(&buffer.push(r#""+","5","8"," ","2"," ","4","8"," ","3","7"," ","0","3"," ","5","8""#, &mapping));
+        total.push_str(&buffer.push(" fin.", &mapping));
+        total.push_str(&buffer.flush_remaining(&mapping));
+
+        assert!(
+            total.contains(r#""+","3","3"," ","6"," ","1","2"," ","3","4"," ","5","6"," ","7","8""#),
+            "Les chars du téléphone doivent être restaurés même avec espace quoté. Reçu: {}",
+            total
+        );
     }
 
     #[test]
