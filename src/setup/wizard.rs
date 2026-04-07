@@ -274,8 +274,6 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String], u
 }
 
 fn setup_upstream_proxy(theme: &ColorfulTheme) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    use std::env;
-
     // Check if already set via environment
     if let Ok(existing) = env::var("HTTPS_PROXY").or_else(|_| env::var("HTTP_PROXY")) {
         println!("  ✓ Corporate proxy detected from environment: {}", existing);
