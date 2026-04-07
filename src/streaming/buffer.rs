@@ -1,5 +1,29 @@
 use crate::mapping::MappingTable;
 
+/// Returns the largest byte index ≤ `pos` that is a valid UTF-8 char boundary in `s`.
+fn floor_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut p = pos;
+    while p > 0 && !s.is_char_boundary(p) {
+        p -= 1;
+    }
+    p
+}
+
+/// Returns the smallest byte index ≥ `pos` that is a valid UTF-8 char boundary in `s`.
+fn ceil_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut p = pos;
+    while p < s.len() && !s.is_char_boundary(p) {
+        p += 1;
+    }
+    p
+}
+
 /// Buffer for de-pseudonymization during SSE streaming.
 /// Accumulates text tokens and detects pseudonyms that could
 /// be split across multiple chunks.
@@ -44,8 +68,9 @@ impl StreamBuffer {
             return String::new();
         }
 
-        // We can flush the beginning of the buffer (keep the end in reserve)
-        let flush_up_to = self.buffer.len() - self.max_pseudonym_len;
+        // We can flush the beginning of the buffer (keep the end in reserve).
+        // Snap to a char boundary to avoid slicing inside a multi-byte character.
+        let flush_up_to = floor_char_boundary(&self.buffer, self.buffer.len() - self.max_pseudonym_len);
         let pairs = mapping.all_pseudonyms_sorted();
 
         // Find the safest cut point: last whitespace before flush_up_to that does NOT
@@ -65,9 +90,11 @@ impl StreamBuffer {
                     if plen < 2 {
                         return false;
                     }
-                    // Search only within the window around the cut point
-                    let win_start = cut.saturating_sub(plen);
-                    let win_end = (cut + plen).min(buf_snapshot.len());
+                    // Search only within the window around the cut point.
+                    // Snap boundaries to valid char positions to avoid panics on
+                    // multi-byte UTF-8 characters (e.g. é, à, ç, …).
+                    let win_start = floor_char_boundary(&buf_snapshot, cut.saturating_sub(plen));
+                    let win_end = ceil_char_boundary(&buf_snapshot, (cut + plen).min(buf_snapshot.len()));
                     let window = &buf_snapshot[win_start..win_end];
                     if let Some(rel) = window.find(pseudo.as_str()) {
                         let abs_start = win_start + rel;
@@ -180,6 +207,22 @@ mod tests {
         // At final flush, "Mic" is not a complete pseudonym -> stays as-is
         let remaining = buffer.flush_remaining(&mapping);
         assert_eq!(remaining, "Bonjour Mic");
+    }
+
+    #[test]
+    fn test_buffer_utf8_multibyte_no_panic() {
+        // Regression: byte slicing on multi-byte chars (é, à, ç) used to panic.
+        // The response from the LLM contains accented French characters, and the
+        // window arithmetic landed inside a 2-byte sequence (e.g. 'é' = bytes 43..45).
+        let mapping = MappingTable::new();
+        mapping.insert("Alice", "Marie", PiiType::GivenName).unwrap();
+
+        let mut buffer = StreamBuffer::new(20);
+        // Text with accented chars that pushes the byte/char boundary mismatch
+        let text = "**changez votre mot de passe** puisqu'il a \u{00e9}t\u{00e9} expos\u{00e9} dans cette conversation.";
+        // Should not panic
+        let _ = buffer.push(text, &mapping);
+        let _ = buffer.flush_remaining(&mapping);
     }
 
     #[test]

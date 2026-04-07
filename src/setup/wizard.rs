@@ -14,6 +14,7 @@ pub struct SetupResult {
     pub shell_configured: bool,
     pub onnx_model_configured: bool,
     pub upstream_proxy: Option<String>,
+    pub danger_accept_invalid_certs: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +131,13 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     // --- Step 5: Corporate proxy ---
     let upstream_proxy = setup_upstream_proxy(&theme)?;
 
+    // --- Step 5b: SSL inspection (only if a proxy was configured) ---
+    let danger_accept_invalid_certs = if upstream_proxy.is_some() {
+        setup_danger_accept_invalid_certs(&theme)?
+    } else {
+        false
+    };
+
     println!();
 
     // --- Step 6: ONNX contextual detection ---
@@ -145,7 +153,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     fs::create_dir_all(&config_dir)?;
 
     let config_path = config_dir.join("config.toml");
-    let config_content = generate_config(listen_port, &providers, &whitelist, upstream_proxy.as_deref());
+    let config_content = generate_config(listen_port, &providers, &whitelist, upstream_proxy.as_deref(), danger_accept_invalid_certs);
 
     if config_path.exists() {
         let overwrite = Confirm::with_theme(&theme)
@@ -174,7 +182,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     let shell_configured = configure_shell(&theme, listen_port, &providers, &shell_name)?;
 
     // --- Summary ---
-    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured, onnx_model_configured, upstream_proxy.as_deref());
+    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured, onnx_model_configured, upstream_proxy.as_deref(), danger_accept_invalid_certs);
 
     Ok(SetupResult {
         listen_port,
@@ -184,6 +192,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
         shell_configured,
         onnx_model_configured,
         upstream_proxy,
+        danger_accept_invalid_certs,
     })
 }
 
@@ -220,7 +229,7 @@ fn detect_shell() -> String {
     "unknown".to_string()
 }
 
-fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String], upstream_proxy: Option<&str>) -> String {
+fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String], upstream_proxy: Option<&str>, danger_accept_invalid_certs: bool) -> String {
     let mut config = String::new();
 
     config.push_str("# MirageIA Configuration\n");
@@ -232,6 +241,9 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String], u
     config.push_str("fail_open = true\n");
     if let Some(proxy) = upstream_proxy {
         config.push_str(&format!("upstream_proxy = \"{}\"\n", proxy));
+    }
+    if danger_accept_invalid_certs {
+        config.push_str("danger_accept_invalid_certs = true\n");
     }
     config.push('\n');
 
@@ -294,6 +306,25 @@ fn setup_upstream_proxy(theme: &ColorfulTheme) -> Result<Option<String>, Box<dyn
 
     println!("  ✓ Proxy configured: {}", trimmed);
     Ok(Some(trimmed))
+}
+
+fn setup_danger_accept_invalid_certs(theme: &ColorfulTheme) -> Result<bool, Box<dyn std::error::Error>> {
+    println!("  Some corporate proxies perform SSL inspection (MITM) and present");
+    println!("  their own certificate — which MirageIA would reject by default.");
+    println!();
+
+    let accept = Confirm::with_theme(theme)
+        .with_prompt("Does your proxy do SSL inspection? (accept invalid certificates)")
+        .default(false)
+        .interact()?;
+
+    if accept {
+        println!("  ✓ danger_accept_invalid_certs = true (TLS validation disabled for upstream)");
+    } else {
+        println!("  Standard TLS validation kept.");
+    }
+
+    Ok(accept)
 }
 
 fn setup_onnx_model(theme: &ColorfulTheme) -> Result<bool, Box<dyn std::error::Error>> {
@@ -420,6 +451,7 @@ fn print_summary(
     shell_configured: bool,
     onnx_model_configured: bool,
     upstream_proxy: Option<&str>,
+    danger_accept_invalid_certs: bool,
 ) {
     println!();
     println!("  ╔══════════════════════════════════════════╗");
@@ -451,6 +483,9 @@ fn print_summary(
 
     if let Some(proxy) = upstream_proxy {
         println!("    Corporate proxy : {}", proxy);
+        if danger_accept_invalid_certs {
+            println!("    SSL inspection  : ✓ accept invalid certs enabled");
+        }
     }
 
     if onnx_model_configured {
@@ -512,7 +547,7 @@ mod tests {
         }];
         let whitelist = vec!["localhost".to_string()];
 
-        let config = generate_config(3100, &providers, &whitelist, None);
+        let config = generate_config(3100, &providers, &whitelist, None, false);
 
         assert!(config.contains("listen_addr = \"127.0.0.1:3100\""));
         assert!(config.contains("fail_open = true"));
@@ -523,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_generate_config_custom_port() {
-        let config = generate_config(4200, &[], &[], None);
+        let config = generate_config(4200, &[], &[], None, false);
         assert!(config.contains("listen_addr = \"127.0.0.1:4200\""));
     }
 
@@ -534,14 +569,14 @@ mod tests {
             "127.0.0.1".to_string(),
             "Thomas Edison".to_string(),
         ];
-        let config = generate_config(3100, &[], &whitelist, None);
+        let config = generate_config(3100, &[], &whitelist, None, false);
         assert!(config.contains("\"Thomas Edison\""));
         assert!(config.contains("\"127.0.0.1\""));
     }
 
     #[test]
     fn test_generate_config_empty_whitelist() {
-        let config = generate_config(3100, &[], &[], None);
+        let config = generate_config(3100, &[], &[], None, false);
         assert!(!config.contains("whitelist"));
     }
 }
