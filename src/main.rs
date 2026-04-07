@@ -523,6 +523,25 @@ fn print_event(event: &serde_json::Value) {
             "  \x1b[90m[{}]\x1b[0m {} {} {:<10} {}{}{}",
             timestamp, dir_colored, status_str, provider, path, duration_str, stream_str
         );
+
+        // Prominent warning for 4xx/5xx
+        if let Some(code) = status_code {
+            if code >= 500 {
+                eprintln!(
+                    "           \x1b[31m|-- ✗ API ERROR {} — upstream server error (Claude will retry)\x1b[0m",
+                    code
+                );
+            } else if code == 429 {
+                eprintln!(
+                    "           \x1b[33m|-- ⚠ RATE LIMITED 429 — too many requests (Claude will retry)\x1b[0m"
+                );
+            } else if code >= 400 {
+                eprintln!(
+                    "           \x1b[33m|-- ⚠ API ERROR {} — client error\x1b[0m",
+                    code
+                );
+            }
+        }
     }
 }
 

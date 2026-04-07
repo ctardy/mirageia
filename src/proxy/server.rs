@@ -57,6 +57,8 @@ pub struct ProxyEvent {
     pub duration_ms: Option<u64>,
     pub streaming: Option<bool>,
     pub error: Option<String>,
+    /// Body of an upstream error response (4xx/5xx), truncated to 300 chars.
+    pub upstream_error: Option<String>,
 }
 
 impl std::fmt::Display for ProxyEvent {
@@ -237,6 +239,7 @@ async fn proxy_handler(
                             "duration_ms": event.duration_ms,
                             "streaming": event.streaming,
                             "error": event.error,
+                            "upstream_error": event.upstream_error,
                         });
                         yield Ok::<_, std::io::Error>(
                             format!("data: {}\n\n", data)
@@ -333,6 +336,7 @@ async fn proxy_handler(
             duration_ms: None,
             streaming: None,
             error: None,
+            upstream_error: None,
         });
 
         let start = std::time::Instant::now();
@@ -357,6 +361,7 @@ async fn proxy_handler(
                     duration_ms: None,
                     streaming: None,
                     error: Some(e.to_string()),
+                    upstream_error: None,
                 });
                 return Err(e.into());
             }
@@ -384,6 +389,7 @@ async fn proxy_handler(
             duration_ms: Some(duration),
             streaming: Some(is_sse),
             error: None,
+            upstream_error: None,
         });
 
         return build_passthrough_response(upstream_response).await;
@@ -446,6 +452,7 @@ async fn proxy_handler(
         duration_ms: None,
         streaming: None,
         error: None,
+        upstream_error: None,
     });
 
     tracing::debug!(
@@ -479,6 +486,7 @@ async fn proxy_handler(
                 duration_ms: None,
                 streaming: None,
                 error: Some(e.to_string()),
+                upstream_error: None,
             });
             return Err(e.into());
         }
@@ -506,6 +514,7 @@ async fn proxy_handler(
         duration_ms: Some(duration),
         streaming: Some(is_sse),
         error: None,
+        upstream_error: None,
     });
 
     // --- RESPONSE DE-PSEUDONYMIZATION ---
