@@ -15,7 +15,22 @@ curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-
 mirageia --version
 ```
 
-Sur Windows, téléchargez `mirageia-windows-x86_64.zip` depuis la page Releases et extrayez `mirageia.exe` dans un dossier de votre PATH.
+**Windows — via Scoop (recommandé)**
+
+```powershell
+# 1. Ajouter le bucket MirageIA (obligatoire avant l'installation)
+scoop bucket add mirageia https://github.com/ctardy/scoop-mirageia
+# 2. Installer
+scoop install mirageia
+# 3. Vérifier
+mirageia --version
+```
+
+> **`couldn't find manifest for 'mirageia'` ?** L'étape 1 a été ignorée. Lancez d'abord `scoop bucket add mirageia https://github.com/ctardy/scoop-mirageia`, puis réessayez.
+
+Scoop installe le binaire et configure le PATH automatiquement. Pas de blocage Windows SmartScreen.
+
+**Windows — manuel** (sans Scoop) : téléchargez `mirageia-windows-x86_64.zip` depuis la page [Releases](https://github.com/ctardy/mirageia/releases/latest) et extrayez `mirageia.exe` dans un dossier de votre PATH.
 
 ### Option B — Depuis les sources
 

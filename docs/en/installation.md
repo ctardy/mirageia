@@ -15,7 +15,22 @@ curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-
 mirageia --version
 ```
 
-On Windows, download `mirageia-windows-x86_64.zip` from the Releases page and extract `mirageia.exe` into a folder in your PATH.
+**Windows — via Scoop (recommended)**
+
+```powershell
+# 1. Add the MirageIA bucket (required before install)
+scoop bucket add mirageia https://github.com/ctardy/scoop-mirageia
+# 2. Install
+scoop install mirageia
+# 3. Verify
+mirageia --version
+```
+
+> **`couldn't find manifest for 'mirageia'`?** You skipped step 1. Run `scoop bucket add mirageia https://github.com/ctardy/scoop-mirageia` first, then retry.
+
+Scoop installs the binary and adds it to your PATH automatically. No SmartScreen warning.
+
+**Windows — manual** (without Scoop): download `mirageia-windows-x86_64.zip` from the [Releases](https://github.com/ctardy/mirageia/releases/latest) page and extract `mirageia.exe` into a folder in your PATH.
 
 ### Option B — From source
 
