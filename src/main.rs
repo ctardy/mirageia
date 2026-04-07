@@ -296,8 +296,7 @@ async fn run_stop(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
 async fn ensure_proxy_running(proxy_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Already running?
     if reqwest::get(&format!("{}/health", proxy_url)).await
-        .map(|r| r.status().is_success())
-        .unwrap_or(false)
+        .map_or(false, |r| r.status().is_success())
     {
         return Ok(());
     }
