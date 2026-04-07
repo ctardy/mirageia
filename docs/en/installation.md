@@ -158,7 +158,7 @@ Instead of configuring manually, run the interactive wizard:
 mirageia setup
 ```
 
-The wizard guides you through 6 steps:
+The wizard guides you through 8 steps:
 
 | Step | Question | What Happens |
 |---|---|---|
@@ -166,8 +166,11 @@ The wizard guides you through 6 steps:
 | 2 | Listening port? | Default `3100`, configurable |
 | 3 | Which LLM providers? | Multi-select: Anthropic, OpenAI, Gemini, Mistral. Auto-detects already configured API keys |
 | 4 | Whitelist? | Terms to never pseudonymize (optional) |
-| 5 | — (automatic) | Generates `~/.mirageia/config.toml` |
-| 6 | Configure shell? | Offers to add `export` statements to `.bashrc` / `.zshrc` |
+| 5 | Corporate proxy? | URL of your company proxy (e.g. `http://proxy.corp:8080`). Auto-detected from `HTTPS_PROXY` / `HTTP_PROXY` env vars |
+| 5b | SSL inspection? | Only shown if step 5 configured a proxy. Enables `danger_accept_invalid_certs` for MITM corporate proxies |
+| 6 | ONNX model? | Offers a one-time ~337 MB download for contextual PII detection (optional) |
+| 7 | — (automatic) | Generates `~/.mirageia/config.toml` |
+| 8 | Configure shell? | Offers to add `export` statements to `.bashrc` / `.zshrc` |
 
 Example session:
 
@@ -182,8 +185,19 @@ Example session:
    [ ] Google Gemini
    [ ] Mistral AI
 
-? Add terms to never pseudonymize? [y/N]: y
-  Whitelist: Thomas Edison, Martin Fowler
+? Add terms to never pseudonymize? [y/N]: n
+
+? Are you behind a corporate proxy? [y/N]: y
+  Proxy URL (e.g. http://proxy.corp:8080): http://proxy.corp:8080
+  ✓ Proxy configured: http://proxy.corp:8080
+
+  Some corporate proxies perform SSL inspection (MITM) and present
+  their own certificate — which MirageIA would reject by default.
+
+? Does your proxy do SSL inspection? (accept invalid certificates) [y/N]: y
+  ✓ danger_accept_invalid_certs = true (TLS validation disabled for upstream)
+
+? Enable ONNX contextual detection? (~337 MB download) [y/N]: n
 
   ✓ Configuration written to ~/.mirageia/config.toml
 
@@ -191,9 +205,11 @@ Example session:
   ✓ ~/.bashrc updated
 
   Setup complete!
-    Proxy     : http://127.0.0.1:3100
-    Providers : Anthropic (Claude)
-    Shell     : ✓ configured
+    Proxy           : http://127.0.0.1:3100
+    Providers       : Anthropic (Claude)
+    Corporate proxy : http://proxy.corp:8080
+    SSL inspection  : ✓ accept invalid certs enabled
+    Shell           : ✓ configured
 
   To start: mirageia
 ```

@@ -434,6 +434,43 @@ The `--restart unless-stopped` flag ensures restart after a crash or server rebo
 - The MirageIA binary has **no network dependency** other than the target LLM APIs
 - No telemetry, no calls to third-party servers
 
+### Corporate proxy support (v0.5.25+)
+
+If MirageIA runs inside a corporate network that routes outbound traffic through a proxy:
+
+```toml
+# config.toml
+[proxy]
+upstream_proxy = "http://proxy.corp:8080"
+```
+
+Or via environment variable:
+```bash
+MIRAGEIA_UPSTREAM_PROXY=http://proxy.corp:8080
+```
+
+MirageIA passes all outbound LLM API calls through this proxy.
+
+#### SSL inspection / MITM proxies
+
+Some corporate proxies perform TLS inspection and present their own certificate, which MirageIA rejects by default. If you get `502 Bad Gateway` errors with a corporate proxy, enable certificate acceptance:
+
+```toml
+# config.toml
+[proxy]
+upstream_proxy = "http://proxy.corp:8080"
+danger_accept_invalid_certs = true
+```
+
+Or:
+```bash
+MIRAGEIA_DANGER_ACCEPT_INVALID_CERTS=1
+```
+
+> **Warning**: `danger_accept_invalid_certs = true` disables TLS validation for upstream calls. Only use it when your corporate proxy is the cause. The `mirageia setup` wizard will ask about this automatically when you configure a proxy.
+
+---
+
 ### Bearer token authentication (v0.5.15+)
 
 Protect the proxy against unauthorized use with an optional bearer token:
@@ -603,6 +640,15 @@ docker stop mirageia && docker rm mirageia
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v0.5.27 | 2026-04-07 | Fix clippy: remove duplicate `use std::env` in setup wizard. |
+| v0.5.26 | 2026-04-07 | Fix UTF-8 panic in streaming buffer (multi-byte chars like é/à/ç in LLM responses). Add `danger_accept_invalid_certs` to setup wizard (Step 5b, shown only when a corporate proxy is configured). |
+| v0.5.25 | 2026-04-07 | Add `upstream_proxy` and `danger_accept_invalid_certs` to setup wizard (Steps 5 and 5b). Corporate proxy + SSL inspection fully configurable via `mirageia setup`. |
+| v0.5.24 | 2026-04-07 | Log proxy errors via `tracing::error!` so 502/connection errors are always visible in terminal even when using `wrap`. |
+| v0.5.23 | 2026-04-07 | Fix clippy: `.map().unwrap_or(false)` → `.map_or(false, ...)` in `ensure_proxy_running`. |
+| v0.5.22 | 2026-04-07 | Prevent auto-update infinite loop under Scoop/Homebrew (`is_managed_install` check). Add version verification step in release workflow. |
+| v0.5.21 | 2026-04-07 | Auto-start proxy in `wrap` and `console` commands instead of exiting when not running. Display API errors (4xx/5xx/429) in console output. |
+| v0.5.20 | 2026-04-07 | Add `upstream_proxy` and `danger_accept_invalid_certs` config options (corporate proxy + SSL inspection support). |
+| v0.5.15 | 2026-04-06 | Bearer token auth, fail-open mode, SSRF protection. |
 | v0.5.9 | 2026-04-05 | Clean up debug tokenizer logs. Docker image updated, ONNX active in production. |
 | v0.5.8 | 2026-04-05 | Fix entrypoint timeout 30s→120s. Memory limit 1G→3G (ONNX: 946 MB RSS + 2.1 GB VmPeak during loading). Docker image rebuild required. |
 | v0.5.7 | 2026-04-05 | Fix ONNX model path (`/` → `__` in check_model_files). Fix entrypoint health check timeout (1s→30s retry loop). |

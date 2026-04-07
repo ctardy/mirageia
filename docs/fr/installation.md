@@ -158,7 +158,7 @@ Au lieu de configurer manuellement, lancez l'assistant interactif :
 mirageia setup
 ```
 
-L'assistant vous guide à travers 6 étapes :
+L'assistant vous guide à travers 8 étapes :
 
 | Étape | Question | Ce qui est fait |
 |---|---|---|
@@ -166,8 +166,11 @@ L'assistant vous guide à travers 6 étapes :
 | 2 | Port d'écoute ? | Défaut `3100`, modifiable |
 | 3 | Quels providers LLM ? | Multi-sélection : Anthropic, OpenAI, Gemini, Mistral. Auto-détecte les clés API déjà configurées |
 | 4 | Whitelist ? | Termes à ne jamais pseudonymiser (optionnel) |
-| 5 | — (automatique) | Génère `~/.mirageia/config.toml` |
-| 6 | Configurer le shell ? | Propose d'ajouter les `export` dans `.bashrc` / `.zshrc` |
+| 5 | Proxy d'entreprise ? | URL de votre proxy corporate (ex. `http://proxy.corp:8080`). Auto-détecté depuis les variables `HTTPS_PROXY` / `HTTP_PROXY` |
+| 5b | Inspection SSL ? | Affiché uniquement si l'étape 5 a configuré un proxy. Active `danger_accept_invalid_certs` pour les proxies MITM d'entreprise |
+| 6 | Modèle ONNX ? | Propose un téléchargement unique (~337 Mo) pour la détection PII contextuelle (optionnel) |
+| 7 | — (automatique) | Génère `~/.mirageia/config.toml` |
+| 8 | Configurer le shell ? | Propose d'ajouter les `export` dans `.bashrc` / `.zshrc` |
 
 Exemple de session :
 
@@ -182,8 +185,19 @@ Exemple de session :
    [ ] Google Gemini
    [ ] Mistral AI
 
-? Ajouter des termes à ne jamais pseudonymiser ? [o/N] : o
-  Whitelist : Thomas Edison, Martin Fowler
+? Ajouter des termes à ne jamais pseudonymiser ? [o/N] : n
+
+? Are you behind a corporate proxy? [y/N]: y
+  Proxy URL (e.g. http://proxy.corp:8080): http://vip-users.proxy.edf.fr:3131
+  ✓ Proxy configured: http://vip-users.proxy.edf.fr:3131
+
+  Some corporate proxies perform SSL inspection (MITM) and present
+  their own certificate — which MirageIA would reject by default.
+
+? Does your proxy do SSL inspection? (accept invalid certificates) [y/N]: y
+  ✓ danger_accept_invalid_certs = true (TLS validation disabled for upstream)
+
+? Enable ONNX contextual detection? (~337 MB download) [y/N]: n
 
   ✓ Configuration écrite dans ~/.mirageia/config.toml
 
@@ -191,9 +205,11 @@ Exemple de session :
   ✓ ~/.bashrc mis à jour
 
   Configuration terminée !
-    Proxy     : http://127.0.0.1:3100
-    Providers : Anthropic (Claude)
-    Shell     : ✓ configuré
+    Proxy           : http://127.0.0.1:3100
+    Providers       : Anthropic (Claude)
+    Corporate proxy : http://vip-users.proxy.edf.fr:3131
+    SSL inspection  : ✓ accept invalid certs enabled
+    Shell           : ✓ configuré
 
   Pour démarrer : mirageia
 ```
