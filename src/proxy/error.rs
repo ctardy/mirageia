@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use std::error::Error as StdError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
@@ -18,7 +19,15 @@ pub enum ProxyError {
 
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
-        tracing::error!("Proxy error: {}", self);
+        // Include root cause for better diagnostics
+        if let ProxyError::Upstream(ref e) = self {
+            let cause = e.source()
+                .map(|s| format!(" — cause: {}", s))
+                .unwrap_or_default();
+            tracing::error!("Proxy error: {}{}", self, cause);
+        } else {
+            tracing::error!("Proxy error: {}", self);
+        }
 
         let status = match &self {
             ProxyError::Upstream(_) => StatusCode::BAD_GATEWAY,
