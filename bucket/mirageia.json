@@ -1,23 +1,23 @@
 {
-    "version": "0.5.16",
-    "description": "Intelligent pseudonymization proxy for LLM APIs — intercepts requests, detects and replaces PII before sending to Anthropic/OpenAI, restores originals in responses.",
-    "homepage": "https://github.com/ctardy/mirageia",
-    "license": "MIT",
-    "architecture": {
-        "64bit": {
-            "url": "https://github.com/ctardy/mirageia/releases/download/v0.5.16/mirageia-windows-x86_64.zip",
-            "hash": "007631ccf964bdca6cf746161b0612519d2cb3f8023009ecc30a1a0ce661cfd5",
-            "bin": "mirageia.exe"
-        }
-    },
-    "checkver": {
-        "github": "https://github.com/ctardy/mirageia"
-    },
-    "autoupdate": {
-        "architecture": {
-            "64bit": {
-                "url": "https://github.com/ctardy/mirageia/releases/download/v$version/mirageia-windows-x86_64.zip"
-            }
-        }
+  "version": "0.5.18",
+  "description": "Intelligent pseudonymization proxy for LLM APIs — intercepts requests, detects and replaces PII before sending to Anthropic/OpenAI, restores originals in responses.",
+  "homepage": "https://github.com/ctardy/mirageia",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/ctardy/mirageia/releases/download/v0.5.18/mirageia-windows-x86_64.zip",
+      "hash": "c7a9d4e116ebf68ffc1d6ef2525dcda305b592c0e0812930dbc738c82eaf8e14",
+      "bin": "mirageia.exe"
     }
+  },
+  "checkver": {
+    "github": "https://github.com/ctardy/mirageia"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/ctardy/mirageia/releases/download/v$version/mirageia-windows-x86_64.zip"
+      }
+    }
+  }
 }
