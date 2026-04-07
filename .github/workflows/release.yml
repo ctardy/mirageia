@@ -93,3 +93,23 @@ jobs:
             artifacts/mirageia-windows-x86_64/mirageia-windows-x86_64.zip
             artifacts/mirageia-macos-aarch64/mirageia-macos-aarch64.tar.gz
             artifacts/mirageia-linux-x86_64/mirageia-linux-x86_64.tar.gz
+
+      - name: Update Scoop manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP="artifacts/mirageia-windows-x86_64/mirageia-windows-x86_64.zip"
+          HASH=$(sha256sum "$ZIP" | awk '{print $1}')
+
+          jq \
+            --arg version "$VERSION" \
+            --arg hash "$HASH" \
+            --arg url "https://github.com/ctardy/mirageia/releases/download/${GITHUB_REF_NAME}/mirageia-windows-x86_64.zip" \
+            '.version = $version | .architecture["64bit"].url = $url | .architecture["64bit"].hash = $hash' \
+            bucket/mirageia.json > bucket/mirageia.json.tmp
+          mv bucket/mirageia.json.tmp bucket/mirageia.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bucket/mirageia.json
+          git commit -m "chore: update Scoop manifest to ${GITHUB_REF_NAME}"
+          git push origin HEAD:main
