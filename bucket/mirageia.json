@@ -1,12 +1,12 @@
 {
-  "version": "0.5.22",
+  "version": "0.5.23",
   "description": "Intelligent pseudonymization proxy for LLM APIs — intercepts requests, detects and replaces PII before sending to Anthropic/OpenAI, restores originals in responses.",
   "homepage": "https://github.com/ctardy/mirageia",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/ctardy/mirageia/releases/download/v0.5.22/mirageia-windows-x86_64.zip",
-      "hash": "c6cde6cc13f10b565efd94ec09d75b40b504b996ae55ca6119f2a5d88fa1ee0e",
+      "url": "https://github.com/ctardy/mirageia/releases/download/v0.5.23/mirageia-windows-x86_64.zip",
+      "hash": "2250d5b8ea14fbdd9d08ea70cb3f227fe1b5fe1a8fd74ff62d9e67739e058db2",
       "bin": "mirageia.exe"
     }
   },
