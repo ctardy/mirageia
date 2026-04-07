@@ -310,6 +310,23 @@ fn extract_from_targz(data: &[u8], target_name: &str) -> Result<Vec<u8>, String>
     ))
 }
 
+/// Returns true if the binary is running under a package manager (Scoop, Homebrew, etc.)
+/// In that case, auto-update should be skipped — the package manager handles updates.
+fn is_managed_install() -> bool {
+    if let Ok(exe) = std::env::current_exe() {
+        let path = exe.to_string_lossy().to_lowercase();
+        // Scoop: C:\Users\...\scoop\apps\...
+        if path.contains("\\scoop\\apps\\") || path.contains("/scoop/apps/") {
+            return true;
+        }
+        // Homebrew: /opt/homebrew/... or /usr/local/Cellar/...
+        if path.contains("/homebrew/") || path.contains("/cellar/") {
+            return true;
+        }
+    }
+    false
+}
+
 /// Applies a staged update on startup.
 ///
 /// If a binary is present in staging/ with a different version from the current one:
@@ -319,6 +336,9 @@ fn extract_from_targz(data: &[u8], target_name: &str) -> Result<Vec<u8>, String>
 ///
 /// Returns `Some(version)` if the update was applied, `None` otherwise.
 pub fn apply_staged_update() -> Option<String> {
+    if is_managed_install() {
+        return None;
+    }
     let staged_version = read_staged_version()?;
 
     if staged_version == current_version() {
@@ -377,6 +397,10 @@ fn cleanup_staging() {
 /// Launches background version check and download.
 /// Does not block the main thread — used on proxy startup.
 pub fn spawn_background_check() {
+    if is_managed_install() {
+        tracing::debug!("Managed install detected (Scoop/Homebrew) — skipping auto-update");
+        return;
+    }
     std::thread::spawn(|| {
         // Short delay to avoid impacting startup
         std::thread::sleep(std::time::Duration::from_secs(5));
