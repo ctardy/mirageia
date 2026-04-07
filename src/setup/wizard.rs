@@ -12,6 +12,7 @@ pub struct SetupResult {
     pub whitelist: Vec<String>,
     pub config_path: PathBuf,
     pub shell_configured: bool,
+    pub onnx_model_configured: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +126,12 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Step 5: Generate configuration ---
+    // --- Step 5: ONNX contextual detection ---
+    let onnx_model_configured = setup_onnx_model(&theme)?;
+
+    println!();
+
+    // --- Step 6: Generate configuration ---
     let config_dir = dirs::home_dir()
         .expect("Cannot find home directory")
         .join(".mirageia");
@@ -158,11 +164,11 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Step 6: Shell configuration ---
+    // --- Step 7: Shell configuration ---
     let shell_configured = configure_shell(&theme, listen_port, &providers, &shell_name)?;
 
     // --- Summary ---
-    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured);
+    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured, onnx_model_configured);
 
     Ok(SetupResult {
         listen_port,
@@ -170,6 +176,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
         whitelist,
         config_path,
         shell_configured,
+        onnx_model_configured,
     })
 }
 
@@ -242,6 +249,52 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -
     }
 
     config
+}
+
+fn setup_onnx_model(theme: &ColorfulTheme) -> Result<bool, Box<dyn std::error::Error>> {
+    use crate::detection::model_manager;
+
+    const MODEL: &str = "iiiorg/piiranha-v1-detect-personal-information";
+
+    // Already configured — skip
+    if let Some(active) = model_manager::get_active_model() {
+        println!("  ✓ ONNX model already active: {}", active);
+        return Ok(true);
+    }
+
+    println!("  PII detection: regex mode (default, no download required).");
+    println!("  ONNX contextual mode is more accurate (understands context,");
+    println!("  fewer false positives) but requires a ~337 MB one-time download.");
+    println!();
+
+    let enable = Confirm::with_theme(theme)
+        .with_prompt("Enable ONNX contextual detection? (~337 MB download)")
+        .default(false)
+        .interact()?;
+
+    if !enable {
+        println!("  Skipped — regex detection active. Enable later: mirageia model download {}", MODEL);
+        return Ok(false);
+    }
+
+    println!();
+    println!("  Downloading model '{}'...", MODEL);
+    println!("  (this may take a few minutes depending on your connection)");
+
+    match model_manager::ensure_model(MODEL) {
+        Ok(_) => {
+            model_manager::set_active_model(MODEL)
+                .map_err(|e| format!("Failed to activate model: {}", e))?;
+            println!("  ✓ Model downloaded and activated");
+            Ok(true)
+        }
+        Err(e) => {
+            println!("  ✗ Download failed: {}", e);
+            println!("  Falling back to regex detection.");
+            println!("  Retry later: mirageia model download {}", MODEL);
+            Ok(false)
+        }
+    }
 }
 
 fn configure_shell(
@@ -320,6 +373,7 @@ fn print_summary(
     whitelist: &[String],
     config_path: &std::path::Path,
     shell_configured: bool,
+    onnx_model_configured: bool,
 ) {
     println!();
     println!("  ╔══════════════════════════════════════════╗");
@@ -347,6 +401,12 @@ fn print_summary(
     if whitelist.len() > 2 {
         // More than localhost and 127.0.0.1
         println!("    Whitelist       : {} terms", whitelist.len());
+    }
+
+    if onnx_model_configured {
+        println!("    PII detection   : ✓ ONNX contextual model active");
+    } else {
+        println!("    PII detection   : regex (enable later: mirageia model download iiiorg/piiranha-v1-detect-personal-information)");
     }
 
     if shell_configured {
