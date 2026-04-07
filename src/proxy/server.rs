@@ -236,6 +236,7 @@ async fn proxy_handler(
                             "status_code": event.status_code,
                             "duration_ms": event.duration_ms,
                             "streaming": event.streaming,
+                            "error": event.error,
                         });
                         yield Ok::<_, std::io::Error>(
                             format!("data: {}\n\n", data)
@@ -504,6 +505,7 @@ async fn proxy_handler(
         status_code: Some(status_code),
         duration_ms: Some(duration),
         streaming: Some(is_sse),
+        error: None,
     });
 
     // --- RESPONSE DE-PSEUDONYMIZATION ---
