@@ -9,7 +9,7 @@ pub struct UpstreamClient {
 }
 
 impl UpstreamClient {
-    pub fn new(upstream_proxy: Option<&str>) -> Self {
+    pub fn new(upstream_proxy: Option<&str>, accept_invalid_certs: bool) -> Self {
         let mut builder = Client::builder();
 
         if let Some(proxy_url) = upstream_proxy {
@@ -22,6 +22,11 @@ impl UpstreamClient {
                     tracing::warn!("Invalid upstream_proxy URL '{}': {} — ignored", proxy_url, e);
                 }
             }
+        }
+
+        if accept_invalid_certs {
+            tracing::warn!("TLS certificate validation disabled (danger_accept_invalid_certs=true)");
+            builder = builder.danger_accept_invalid_certs(true);
         }
 
         let client = builder

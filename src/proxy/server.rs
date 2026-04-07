@@ -110,7 +110,7 @@ pub fn create_state(config: AppConfig) -> ProxyState {
     let onnx_model: Option<String> = None;
 
     ProxyState {
-        client: UpstreamClient::new(config.upstream_proxy.as_deref()),
+        client: UpstreamClient::new(config.upstream_proxy.as_deref(), config.danger_accept_invalid_certs),
         config,
         detector: RegexDetector::new(),
         #[cfg(feature = "onnx")]

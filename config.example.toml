@@ -11,6 +11,7 @@
 # fail_open = true                             # Forward request if pseudonymization fails
 # passthrough = false                          # Passthrough mode: relay without pseudonymizing
 # upstream_proxy = "http://proxy.corp:8080"    # Corporate proxy for outbound requests (env: MIRAGEIA_UPSTREAM_PROXY)
+# danger_accept_invalid_certs = false          # Accept corporate MITM certificates — use if proxy does SSL inspection (env: MIRAGEIA_DANGER_ACCEPT_INVALID_CERTS)
 
 [detection]
 # confidence_threshold = 0.75                  # Detection confidence threshold (0.0-1.0)

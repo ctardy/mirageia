@@ -30,6 +30,9 @@ pub struct AppConfig {
     /// Corporate/upstream HTTP proxy for outbound requests (e.g. "http://proxy.corp:8080").
     /// If None, falls back to HTTPS_PROXY / HTTP_PROXY environment variables.
     pub upstream_proxy: Option<String>,
+    /// Accept invalid/self-signed TLS certificates from upstream.
+    /// Use when corporate proxy performs SSL inspection (MITM).
+    pub danger_accept_invalid_certs: bool,
 }
 
 /// Structure of the config.toml file (deserializable).
@@ -52,6 +55,7 @@ struct ProxyFileConfig {
     passthrough: Option<bool>,
     proxy_token: Option<String>,
     upstream_proxy: Option<String>,
+    danger_accept_invalid_certs: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -80,6 +84,7 @@ impl Default for AppConfig {
             model_name: None,
             proxy_token: None,
             upstream_proxy: None,
+            danger_accept_invalid_certs: false,
         }
     }
 }
@@ -118,6 +123,9 @@ impl AppConfig {
             if let Some(p) = file_config.proxy.upstream_proxy {
                 config.upstream_proxy = Some(p);
             }
+            if let Some(v) = file_config.proxy.danger_accept_invalid_certs {
+                config.danger_accept_invalid_certs = v;
+            }
             if !file_config.detection.whitelist.is_empty() {
                 // Merge with the default whitelist (loopback, etc.)
                 for term in file_config.detection.whitelist {
@@ -155,6 +163,9 @@ impl AppConfig {
         }
         if let Ok(p) = env::var("MIRAGEIA_UPSTREAM_PROXY") {
             config.upstream_proxy = Some(p);
+        }
+        if env::var("MIRAGEIA_DANGER_ACCEPT_INVALID_CERTS").is_ok() {
+            config.danger_accept_invalid_certs = true;
         }
 
         config

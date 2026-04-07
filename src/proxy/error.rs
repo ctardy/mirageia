@@ -18,6 +18,8 @@ pub enum ProxyError {
 
 impl IntoResponse for ProxyError {
     fn into_response(self) -> Response {
+        tracing::error!("Proxy error: {}", self);
+
         let status = match &self {
             ProxyError::Upstream(_) => StatusCode::BAD_GATEWAY,
             ProxyError::Http(_) => StatusCode::INTERNAL_SERVER_ERROR,
