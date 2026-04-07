@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use mirageia::config::AppConfig;
 use mirageia::proxy;
+use mirageia::proxy::server::start_proxy as proxy_start;
 
 #[derive(Parser)]
 #[command(name = "mirageia", version, about = "Intelligent pseudonymization proxy for LLM APIs")]
@@ -291,25 +292,48 @@ async fn run_stop(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Starts the proxy in the background if not already running. Waits up to 5s.
+async fn ensure_proxy_running(proxy_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Already running?
+    if reqwest::get(&format!("{}/health", proxy_url)).await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    eprintln!("  Starting MirageIA proxy in the background...");
+    let config = AppConfig::load();
+    tokio::spawn(async move {
+        let _ = proxy_start(config).await;
+    });
+
+    for _ in 0..50 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        if reqwest::get(&format!("{}/health", proxy_url)).await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            eprintln!("  ✓ MirageIA started");
+            return Ok(());
+        }
+    }
+
+    eprintln!("  ✗ MirageIA failed to start within 5s");
+    std::process::exit(1);
+}
+
 /// Launches a child command with environment variables pointing to the proxy.
 async fn run_wrap(command: Vec<String>, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let proxy_url = format!("http://127.0.0.1:{}", port);
 
-    // Check that the proxy is running
-    match reqwest::get(&format!("{}/health", proxy_url)).await {
-        Ok(resp) if resp.status().is_success() => {
-            let health: serde_json::Value = resp.json().await?;
-            let mode = if health["passthrough"].as_bool().unwrap_or(false) {
-                "passthrough"
-            } else {
-                "pseudonymization"
-            };
+    ensure_proxy_running(&proxy_url).await?;
+
+    // Show status
+    if let Ok(resp) = reqwest::get(&format!("{}/health", proxy_url)).await {
+        if let Ok(health) = resp.json::<serde_json::Value>().await {
+            let mode = if health["passthrough"].as_bool().unwrap_or(false) { "passthrough" } else { "pseudonymization" };
             eprintln!("  ✓ MirageIA active on {} (mode {})", proxy_url, mode);
-        }
-        _ => {
-            eprintln!("  ✗ MirageIA not responding on {}", proxy_url);
-            eprintln!("    Start it first: mirageia");
-            std::process::exit(1);
         }
     }
 
@@ -337,40 +361,29 @@ async fn run_wrap(command: Vec<String>, port: u16) -> Result<(), Box<dyn std::er
 async fn run_console(addr: &str) -> Result<(), Box<dyn std::error::Error>> {
     let events_url = format!("{}/events", addr);
 
-    // Check that the proxy is running
-    match reqwest::get(&format!("{}/health", addr)).await {
-        Ok(resp) if resp.status().is_success() => {
-            let health: serde_json::Value = resp.json().await?;
-            let mode = if health["passthrough"].as_bool().unwrap_or(false) {
-                "PASSTHROUGH"
-            } else {
-                "PSEUDONYMIZATION"
-            };
-            let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
-            let version = health["version"].as_str().unwrap_or("?");
-            let detection = match health["onnx_model"].as_str() {
-                Some(model) => format!("regex + ONNX ({})", model),
-                None => "regex only".to_string(),
-            };
-            eprintln!("  ╔══════════════════════════════════════════╗");
-            eprintln!("  ║  MirageIA Console                       ║");
-            eprintln!("  ╚══════════════════════════════════════════╝");
-            eprintln!();
-            eprintln!("  Version    : {}", version);
-            eprintln!("  Proxy      : {}", addr);
-            eprintln!("  Mode       : {}", mode);
-            eprintln!("  Detection  : {}", detection);
-            eprintln!("  Mappings   : {}", mappings);
-            eprintln!();
-            eprintln!("  Waiting for requests... (Ctrl+C to quit)");
-            eprintln!("  -------------------------------------------------");
-        }
-        _ => {
-            eprintln!("  ✗ MirageIA not responding on {}", addr);
-            eprintln!("    Start it first: mirageia");
-            std::process::exit(1);
-        }
-    }
+    ensure_proxy_running(addr).await?;
+
+    let health: serde_json::Value = reqwest::get(&format!("{}/health", addr))
+        .await?.json().await?;
+    let mode = if health["passthrough"].as_bool().unwrap_or(false) { "PASSTHROUGH" } else { "PSEUDONYMIZATION" };
+    let mappings = health["pii_mappings"].as_u64().unwrap_or(0);
+    let version = health["version"].as_str().unwrap_or("?");
+    let detection = match health["onnx_model"].as_str() {
+        Some(model) => format!("regex + ONNX ({})", model),
+        None => "regex only".to_string(),
+    };
+    eprintln!("  ╔══════════════════════════════════════════╗");
+    eprintln!("  ║  MirageIA Console                       ║");
+    eprintln!("  ╚══════════════════════════════════════════╝");
+    eprintln!();
+    eprintln!("  Version    : {}", version);
+    eprintln!("  Proxy      : {}", addr);
+    eprintln!("  Mode       : {}", mode);
+    eprintln!("  Detection  : {}", detection);
+    eprintln!("  Mappings   : {}", mappings);
+    eprintln!();
+    eprintln!("  Waiting for requests... (Ctrl+C to quit)");
+    eprintln!("  -------------------------------------------------");
 
     // Connect to SSE stream
     let response = reqwest::get(&events_url).await?;
@@ -434,6 +447,17 @@ fn print_event(event: &serde_json::Value) {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+
+    // Error event — display and return
+    if let Some(err) = event["error"].as_str() {
+        let provider = event["provider"].as_str().unwrap_or("???");
+        let path = event["path"].as_str().unwrap_or("/");
+        eprintln!(
+            "  \x1b[90m[{}]\x1b[0m \x1b[31m✗ ERR\x1b[0m {:<10} {}  \x1b[31m{}\x1b[0m",
+            timestamp, provider, path, err
+        );
+        return;
+    }
 
     let is_request = direction == "\u{2192}";
 

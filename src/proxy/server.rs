@@ -56,6 +56,7 @@ pub struct ProxyEvent {
     pub status_code: Option<u16>,
     pub duration_ms: Option<u64>,
     pub streaming: Option<bool>,
+    pub error: Option<String>,
 }
 
 impl std::fmt::Display for ProxyEvent {
@@ -330,13 +331,35 @@ async fn proxy_handler(
             status_code: None,
             duration_ms: None,
             streaming: None,
+            error: None,
         });
 
         let start = std::time::Instant::now();
-        let upstream_response = state
+        let upstream_response = match state
             .client
             .forward(method, &upstream_url, upstream_headers, Bytes::from(body_bytes.to_vec()))
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = state.events_tx.send(ProxyEvent {
+                    timestamp: chrono::Local::now(),
+                    provider: format!("{:?}", provider),
+                    path: path.clone(),
+                    direction: Direction::Response,
+                    pii_count: 0,
+                    passthrough: true,
+                    body_size: 0,
+                    model: None,
+                    pii_types: Vec::new(),
+                    status_code: None,
+                    duration_ms: None,
+                    streaming: None,
+                    error: Some(e.to_string()),
+                });
+                return Err(e.into());
+            }
+        };
         let duration = start.elapsed().as_millis() as u64;
 
         let status_code = upstream_response.status().as_u16();
@@ -359,6 +382,7 @@ async fn proxy_handler(
             status_code: Some(status_code),
             duration_ms: Some(duration),
             streaming: Some(is_sse),
+            error: None,
         });
 
         return build_passthrough_response(upstream_response).await;
@@ -420,6 +444,7 @@ async fn proxy_handler(
         status_code: None,
         duration_ms: None,
         streaming: None,
+        error: None,
     });
 
     tracing::debug!(
@@ -432,10 +457,31 @@ async fn proxy_handler(
 
     // Send to upstream
     let start = std::time::Instant::now();
-    let upstream_response = state
+    let upstream_response = match state
         .client
         .forward(method, &upstream_url, upstream_headers, Bytes::from(final_body))
-        .await?;
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = state.events_tx.send(ProxyEvent {
+                timestamp: chrono::Local::now(),
+                provider: format!("{:?}", provider),
+                path: path.clone(),
+                direction: Direction::Response,
+                pii_count: 0,
+                passthrough: false,
+                body_size: 0,
+                model: None,
+                pii_types: Vec::new(),
+                status_code: None,
+                duration_ms: None,
+                streaming: None,
+                error: Some(e.to_string()),
+            });
+            return Err(e.into());
+        }
+    };
     let duration = start.elapsed().as_millis() as u64;
 
     let status_code = upstream_response.status().as_u16();
