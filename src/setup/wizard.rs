@@ -13,6 +13,7 @@ pub struct SetupResult {
     pub config_path: PathBuf,
     pub shell_configured: bool,
     pub onnx_model_configured: bool,
+    pub upstream_proxy: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,12 +127,17 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Step 5: ONNX contextual detection ---
+    // --- Step 5: Corporate proxy ---
+    let upstream_proxy = setup_upstream_proxy(&theme)?;
+
+    println!();
+
+    // --- Step 6: ONNX contextual detection ---
     let onnx_model_configured = setup_onnx_model(&theme)?;
 
     println!();
 
-    // --- Step 6: Generate configuration ---
+    // --- Step 7: Generate configuration ---
     let config_dir = dirs::home_dir()
         .expect("Cannot find home directory")
         .join(".mirageia");
@@ -139,7 +145,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
     fs::create_dir_all(&config_dir)?;
 
     let config_path = config_dir.join("config.toml");
-    let config_content = generate_config(listen_port, &providers, &whitelist);
+    let config_content = generate_config(listen_port, &providers, &whitelist, upstream_proxy.as_deref());
 
     if config_path.exists() {
         let overwrite = Confirm::with_theme(&theme)
@@ -164,11 +170,11 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
 
     println!();
 
-    // --- Step 7: Shell configuration ---
+    // --- Step 8: Shell configuration ---
     let shell_configured = configure_shell(&theme, listen_port, &providers, &shell_name)?;
 
     // --- Summary ---
-    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured, onnx_model_configured);
+    print_summary(listen_port, &providers, &whitelist, &config_path, shell_configured, onnx_model_configured, upstream_proxy.as_deref());
 
     Ok(SetupResult {
         listen_port,
@@ -177,6 +183,7 @@ pub fn run_setup() -> Result<SetupResult, Box<dyn std::error::Error>> {
         config_path,
         shell_configured,
         onnx_model_configured,
+        upstream_proxy,
     })
 }
 
@@ -213,7 +220,7 @@ fn detect_shell() -> String {
     "unknown".to_string()
 }
 
-fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -> String {
+fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String], upstream_proxy: Option<&str>) -> String {
     let mut config = String::new();
 
     config.push_str("# MirageIA Configuration\n");
@@ -223,6 +230,9 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -
     config.push_str(&format!("listen_addr = \"127.0.0.1:{}\"\n", port));
     config.push_str("log_level = \"info\"\n");
     config.push_str("fail_open = true\n");
+    if let Some(proxy) = upstream_proxy {
+        config.push_str(&format!("upstream_proxy = \"{}\"\n", proxy));
+    }
     config.push('\n');
 
     // Provider URLs
@@ -249,6 +259,41 @@ fn generate_config(port: u16, providers: &[LlmProvider], whitelist: &[String]) -
     }
 
     config
+}
+
+fn setup_upstream_proxy(theme: &ColorfulTheme) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use std::env;
+
+    // Check if already set via environment
+    if let Ok(existing) = env::var("HTTPS_PROXY").or_else(|_| env::var("HTTP_PROXY")) {
+        println!("  ✓ Corporate proxy detected from environment: {}", existing);
+        let keep = Confirm::with_theme(theme)
+            .with_prompt("Save this proxy to config.toml?")
+            .default(true)
+            .interact()?;
+        return Ok(if keep { Some(existing) } else { None });
+    }
+
+    let behind_proxy = Confirm::with_theme(theme)
+        .with_prompt("Are you behind a corporate proxy?")
+        .default(false)
+        .interact()?;
+
+    if !behind_proxy {
+        return Ok(None);
+    }
+
+    let proxy_url: String = Input::with_theme(theme)
+        .with_prompt("Proxy URL (e.g. http://proxy.corp:8080)")
+        .interact_text()?;
+
+    let trimmed = proxy_url.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    println!("  ✓ Proxy configured: {}", trimmed);
+    Ok(Some(trimmed))
 }
 
 fn setup_onnx_model(theme: &ColorfulTheme) -> Result<bool, Box<dyn std::error::Error>> {
@@ -374,6 +419,7 @@ fn print_summary(
     config_path: &std::path::Path,
     shell_configured: bool,
     onnx_model_configured: bool,
+    upstream_proxy: Option<&str>,
 ) {
     println!();
     println!("  ╔══════════════════════════════════════════╗");
@@ -401,6 +447,10 @@ fn print_summary(
     if whitelist.len() > 2 {
         // More than localhost and 127.0.0.1
         println!("    Whitelist       : {} terms", whitelist.len());
+    }
+
+    if let Some(proxy) = upstream_proxy {
+        println!("    Corporate proxy : {}", proxy);
     }
 
     if onnx_model_configured {
@@ -462,7 +512,7 @@ mod tests {
         }];
         let whitelist = vec!["localhost".to_string()];
 
-        let config = generate_config(3100, &providers, &whitelist);
+        let config = generate_config(3100, &providers, &whitelist, None);
 
         assert!(config.contains("listen_addr = \"127.0.0.1:3100\""));
         assert!(config.contains("fail_open = true"));
@@ -473,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_generate_config_custom_port() {
-        let config = generate_config(4200, &[], &[]);
+        let config = generate_config(4200, &[], &[], None);
         assert!(config.contains("listen_addr = \"127.0.0.1:4200\""));
     }
 
@@ -484,7 +534,7 @@ mod tests {
             "127.0.0.1".to_string(),
             "Thomas Edison".to_string(),
         ];
-        let config = generate_config(3100, &[], &whitelist);
+        let config = generate_config(3100, &[], &whitelist, None);
         assert!(config.contains("\"Thomas Edison\""));
         assert!(config.contains("\"127.0.0.1\""));
     }
