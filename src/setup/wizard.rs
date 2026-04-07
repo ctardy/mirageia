@@ -541,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_generate_config_empty_whitelist() {
-        let config = generate_config(3100, &[], &[]);
+        let config = generate_config(3100, &[], &[], None);
         assert!(!config.contains("whitelist"));
     }
 }
