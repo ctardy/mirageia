@@ -10,6 +10,7 @@
 # add_header = false                           # Add X-MirageIA: active header
 # fail_open = true                             # Forward request if pseudonymization fails
 # passthrough = false                          # Passthrough mode: relay without pseudonymizing
+# upstream_proxy = "http://proxy.corp:8080"    # Corporate proxy for outbound requests (env: MIRAGEIA_UPSTREAM_PROXY)
 
 [detection]
 # confidence_threshold = 0.75                  # Detection confidence threshold (0.0-1.0)

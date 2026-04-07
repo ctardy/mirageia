@@ -9,10 +9,24 @@ pub struct UpstreamClient {
 }
 
 impl UpstreamClient {
-    pub fn new() -> Self {
-        let client = Client::builder()
+    pub fn new(upstream_proxy: Option<&str>) -> Self {
+        let mut builder = Client::builder();
+
+        if let Some(proxy_url) = upstream_proxy {
+            match reqwest::Proxy::all(proxy_url) {
+                Ok(proxy) => {
+                    builder = builder.proxy(proxy);
+                    tracing::info!("Upstream proxy configured: {}", proxy_url);
+                }
+                Err(e) => {
+                    tracing::warn!("Invalid upstream_proxy URL '{}': {} — ignored", proxy_url, e);
+                }
+            }
+        }
+
+        let client = builder
             .build()
-            .expect("Impossible de créer le client HTTP");
+            .expect("Failed to create HTTP client");
 
         Self { client }
     }
