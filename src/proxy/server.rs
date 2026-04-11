@@ -363,7 +363,7 @@ async fn proxy_handler(
                     error: Some(e.to_string()),
                     upstream_error: None,
                 });
-                return Err(e.into());
+                return Err(e);
             }
         };
         let duration = start.elapsed().as_millis() as u64;
@@ -488,7 +488,7 @@ async fn proxy_handler(
                 error: Some(e.to_string()),
                 upstream_error: None,
             });
-            return Err(e.into());
+            return Err(e);
         }
     };
     let duration = start.elapsed().as_millis() as u64;

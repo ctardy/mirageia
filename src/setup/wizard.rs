@@ -441,6 +441,7 @@ fn configure_shell(
     Ok(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_summary(
     port: u16,
     providers: &[LlmProvider],
