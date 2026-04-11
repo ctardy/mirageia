@@ -3,7 +3,7 @@ name = "mirageia"
 version = "0.5.26"
 edition = "2021"
 description = "Intelligent pseudonymization proxy for LLM APIs"
-license = "MIT"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 
 [dependencies]
 axum = "0.7"

@@ -327,4 +327,6 @@ cargo test -- pseudonymization
 
 ## License
 
-MIT
+**Free for personal and non-commercial use** under the [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/) license.
+
+**Commercial use** (within a company, for revenue-generating activities, or as part of a paid product/service) requires a commercial license. Contact: contact@uitguard.com
