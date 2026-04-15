@@ -32,6 +32,8 @@ Scoop installs the binary and adds it to your PATH automatically. No SmartScreen
 
 **Windows — manual** (without Scoop): download `mirageia-windows-x86_64.zip` from the [Releases](https://github.com/ctardy/mirageia/releases/latest) page and extract `mirageia.exe` into a folder in your PATH.
 
+> Windows executables are **digitally signed** (Microsoft Trusted Signing, publisher `UITguard`). You can verify the signature via `File Properties → Digital Signatures tab`.
+
 ### Option B — From source
 
 If you have Rust installed:

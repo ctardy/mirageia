@@ -32,6 +32,8 @@ Scoop installe le binaire et configure le PATH automatiquement. Pas de blocage W
 
 **Windows — manuel** (sans Scoop) : téléchargez `mirageia-windows-x86_64.zip` depuis la page [Releases](https://github.com/ctardy/mirageia/releases/latest) et extrayez `mirageia.exe` dans un dossier de votre PATH.
 
+> Les exécutables Windows sont **signés numériquement** (Microsoft Trusted Signing, éditeur `UITguard`). Vous pouvez vérifier la signature via `Propriétés du fichier → onglet Signatures numériques`.
+
 ### Option B — Depuis les sources
 
 Si vous avez Rust installé :

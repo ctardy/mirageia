@@ -54,6 +54,22 @@ $env:PATH += ";$env:LOCALAPPDATA\MirageIA"
 curl -sSfL https://github.com/ctardy/mirageia/releases/latest/download/mirageia-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m).tar.gz | tar xz -C /usr/local/bin/
 ```
 
+### Digital signature (Windows)
+
+The `mirageia.exe` binary is **digitally signed** with Microsoft Trusted Signing. The publisher displayed by Windows is `UITguard`.
+
+This means:
+- No SmartScreen warning on download or execution
+- Integrity verification: any modification of the binary invalidates the signature
+- RFC 3161 timestamp: the signature remains valid after the certificate expires
+
+To verify the signature:
+```powershell
+Get-AuthenticodeSignature mirageia.exe
+```
+
+macOS and Linux binaries are not signed (out of scope for this phase).
+
 ### Automatic installation script
 
 An `install.sh` script detects the OS and architecture, then downloads the correct binary:
